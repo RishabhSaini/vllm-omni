@@ -705,8 +705,6 @@ async def run_standalone(args: TrackingNamespace) -> None:
     Loads the full pipeline config, extracts the requested stage, builds a
     1-stage pipeline, and delegates to ``omni_run_server()``.
     """
-    import dataclasses
-
     from vllm_omni.entrypoints.utils import load_and_resolve_stage_configs
 
     model = args.model
@@ -734,16 +732,17 @@ async def run_standalone(args: TrackingNamespace) -> None:
         available = [c.stage_id for c in stage_configs]
         raise ValueError(f"--stage-id {stage_id} not found (available: {available})")
 
-    # Make this stage a complete 1-stage pipeline
-    extras = dict(stage_cfg.yaml_extras)
-    extras.pop("output_connectors", None)
-    extras.pop("input_connectors", None)
-    stage_cfg = dataclasses.replace(
-        stage_cfg,
-        input_sources=[],
-        final_output=True,
-        yaml_extras=extras,
-    )
+    # Make this stage a complete 1-stage pipeline.
+    # Stage configs are OmegaConf DictConfig objects from to_omegaconf().
+    from omegaconf import OmegaConf, open_dict
+
+    with open_dict(stage_cfg):
+        stage_cfg.engine_input_source = []
+        stage_cfg.final_output = True
+        if "output_connectors" in stage_cfg:
+            del stage_cfg.output_connectors
+        if "input_connectors" in stage_cfg:
+            del stage_cfg.input_connectors
 
     logger.info(
         "[Standalone] Running stage %d (%s) as standalone server",
