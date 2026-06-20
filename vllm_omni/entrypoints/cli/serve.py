@@ -744,10 +744,11 @@ async def run_standalone(args: TrackingNamespace) -> None:
         if "input_connectors" in stage_cfg:
             del stage_cfg.input_connectors
 
+    stage_name = stage_cfg.engine_args.get("model_stage", "unknown") if hasattr(stage_cfg, "engine_args") else "unknown"
     logger.info(
         "[Standalone] Running stage %d (%s) as standalone server",
         stage_id,
-        stage_cfg.model_stage,
+        stage_name,
     )
 
     # Clear stage_id so engine doesn't enter single_stage_mode
