@@ -233,7 +233,9 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin):
         engine_output_type = (self.vllm_config.model_config.engine_output_type or "").lower()
         # Single-stage AR TTS models (e.g. VoxCPM2) finish on this stage but still
         # need multimodal payloads for final audio postprocess/output.
-        if engine_output_type == "audio" and not downstream_req_ids:
+        # Models with engine_output_type="latent" (e.g. standalone talker) need
+        # postprocess() for internal AR state feedback (hidden_states['last']).
+        if engine_output_type in ("audio", "latent") and not downstream_req_ids:
             downstream_req_ids = req_ids_output_copy
         return engine_output_type, downstream_req_ids
 
