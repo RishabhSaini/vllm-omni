@@ -737,6 +737,7 @@ async def run_standalone(args: TrackingNamespace) -> None:
     from omegaconf import OmegaConf, open_dict
 
     with open_dict(stage_cfg):
+        stage_cfg.stage_id = 0  # must be 0 — orchestrator indexes by position
         stage_cfg.engine_input_source = []
         stage_cfg.final_output = True
         if "output_connectors" in stage_cfg:
