@@ -3306,6 +3306,94 @@ async def omni_wakeup(request: OmniWakeupRequest, raw_request: Request):
     return {"status": "SUCCESS", "acks": [dataclasses.asdict(a) if dataclasses.is_dataclass(a) else a for a in acks]}
 
 
+@router.post("/v1/stage/run")
+@with_cancellation
+async def stage_run(raw_request: Request):
+    """Run a standalone stage and return its raw output.
+
+    For mid-pipeline stages (e.g., talker), returns the multimodal_output
+    (codec tokens, embeddings) as JSON instead of converting to audio.
+    For final stages (e.g., code2wav), returns the final output directly.
+    """
+    import torch
+    import uuid as _uuid
+
+    body = await raw_request.json()
+    request_id = body.get("request_id", f"stage-{_uuid.uuid4().hex[:8]}")
+
+    handler = Omnispeech(raw_request)
+    if handler is None:
+        return JSONResponse(
+            {"error": "Stage serving not available"},
+            status_code=HTTPStatus.NOT_FOUND.value,
+        )
+
+    try:
+        from vllm_omni.entrypoints.openai.protocol import OpenAICreateSpeechRequest
+
+        speech_request = OpenAICreateSpeechRequest(
+            model=body.get("model", ""),
+            input=body.get("input", ""),
+            voice=body.get("voice", ""),
+            **{k: v for k, v in body.items()
+               if k not in ("model", "input", "voice", "request_id")},
+        )
+
+        _, generator, _ = await handler._prepare_speech_generation(
+            speech_request, request_id=request_id,
+        )
+
+        final_output = None
+        async for output in generator:
+            final_output = output
+
+        if final_output is None:
+            return JSONResponse(
+                {"error": "No output generated", "request_id": request_id},
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+            )
+
+        mm_output, _ = handler._extract_audio_output(final_output)
+
+        def _serialize(obj):
+            if isinstance(obj, torch.Tensor):
+                return obj.cpu().tolist()
+            if isinstance(obj, dict):
+                return {k: _serialize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_serialize(x) for x in obj]
+            return obj
+
+        text_output = ""
+        outputs = getattr(final_output, "outputs", None)
+        if outputs:
+            for co in outputs:
+                t = getattr(co, "text", None)
+                if t:
+                    text_output = t
+                    break
+
+        return JSONResponse({
+            "request_id": request_id,
+            "stage_output": _serialize(mm_output) if mm_output else None,
+            "text_output": text_output,
+            "finished": getattr(final_output, "finished", True),
+        })
+
+    except ValueError as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.BAD_REQUEST.value,
+        )
+    except (EngineGenerateError, EngineDeadError) as exc:
+        return _create_engine_error_json_response(raw_request, exc)
+    except Exception as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+        )
+
+
 if __name__ == "__main__":
     import asyncio
 
