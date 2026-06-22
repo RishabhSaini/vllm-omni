@@ -3309,17 +3309,29 @@ async def omni_wakeup(request: OmniWakeupRequest, raw_request: Request):
 @router.post("/v1/stage/run")
 @with_cancellation
 async def stage_run(raw_request: Request):
-    """Run a standalone stage and return its raw output.
+    """Run a standalone stage.
 
-    For mid-pipeline stages (e.g., talker), returns the multimodal_output
-    (codec tokens, embeddings) as JSON instead of converting to audio.
-    For final stages (e.g., code2wav), returns the final output directly.
+    Two modes based on request body:
+    - Client request (has "input"): runs generation, returns stage_output JSON
+    - Upstream stage output (has "stage_output"): feeds to engine, returns final output
     """
     import torch
     import uuid as _uuid
 
     body = await raw_request.json()
     request_id = body.get("request_id", f"stage-{_uuid.uuid4().hex[:8]}")
+
+    has_upstream = "stage_output" in body and body["stage_output"] is not None
+
+    if has_upstream:
+        return await _stage_run_downstream(raw_request, body, request_id)
+    else:
+        return await _stage_run_entry(raw_request, body, request_id)
+
+
+async def _stage_run_entry(raw_request: Request, body: dict, request_id: str):
+    """Entry stage: accept client request, run generation, return stage_output."""
+    import torch
 
     handler = Omnispeech(raw_request)
     if handler is None:
@@ -3381,6 +3393,114 @@ async def stage_run(raw_request: Request):
             "request_id": request_id,
             "stage_output": _serialize(mm_output) if mm_output else None,
             "text_output": text_output,
+            "finished": getattr(final_output, "finished", True),
+        })
+
+    except ValueError as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.BAD_REQUEST.value,
+        )
+    except (EngineGenerateError, EngineDeadError) as exc:
+        return _create_engine_error_json_response(raw_request, exc)
+    except Exception as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+        )
+
+
+async def _stage_run_downstream(raw_request: Request, body: dict, request_id: str):
+    """Downstream stage: accept upstream stage_output, run engine, return result."""
+    import io
+    import wave
+
+    import numpy as np
+    import torch
+
+    engine_client = raw_request.app.state.engine_client
+    stage_output = body["stage_output"]
+
+    try:
+        # Build prompt_token_ids from upstream codec output.
+        # The stage_output from the talker contains "latent" or "codes.audio"
+        # with the raw codec tokens. For code2wav, we need to flatten them
+        # into codebook-major order: [Q0_f0, Q1_f0, ..., Q15_f0, Q0_f1, ...]
+        codec_data = stage_output.get("latent") or stage_output.get("codes", {}).get("audio")
+        if codec_data is None:
+            return JSONResponse(
+                {"error": "No codec data in stage_output", "request_id": request_id},
+                status_code=HTTPStatus.BAD_REQUEST.value,
+            )
+
+        # codec_data is either a 2D list [num_frames, Q] or a flat list
+        codec_tensor = torch.tensor(codec_data, dtype=torch.long)
+        if codec_tensor.ndim == 2:
+            # [num_frames, Q] -> codebook-major flat [Q*num_frames]
+            prompt_token_ids = codec_tensor.transpose(0, 1).reshape(-1).tolist()
+        else:
+            prompt_token_ids = codec_tensor.tolist()
+
+        # Submit to engine via generate()
+        generator = engine_client.generate(
+            prompt={"prompt_token_ids": prompt_token_ids},
+            request_id=request_id,
+        )
+
+        final_output = None
+        async for output in generator:
+            final_output = output
+
+        if final_output is None:
+            return JSONResponse(
+                {"error": "No output generated", "request_id": request_id},
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+            )
+
+        # Extract audio from output
+        handler = Omnispeech(raw_request)
+        if handler is not None:
+            mm_output, audio_key = handler._extract_audio_output(final_output)
+            if mm_output and audio_key:
+                audio_tensor = mm_output[audio_key]
+                sr_raw = mm_output.get("sr", 24000)
+                sr_val = sr_raw[-1] if isinstance(sr_raw, list) and sr_raw else sr_raw
+                sample_rate = int(sr_val.item()) if hasattr(sr_val, "item") else int(sr_val)
+
+                if isinstance(audio_tensor, torch.Tensor):
+                    audio_np = audio_tensor.float().detach().cpu().numpy().squeeze()
+                    buf = io.BytesIO()
+                    with wave.open(buf, "wb") as wf:
+                        wf.setnchannels(1)
+                        wf.setsampwidth(2)
+                        wf.setframerate(sample_rate)
+                        audio_int16 = (audio_np * 32767).astype(np.int16)
+                        wf.writeframes(audio_int16.tobytes())
+
+                    return Response(
+                        content=buf.getvalue(),
+                        media_type="audio/wav",
+                    )
+
+        # Fallback: return whatever output we have as JSON
+        def _serialize(obj):
+            if isinstance(obj, torch.Tensor):
+                return obj.cpu().tolist()
+            if isinstance(obj, dict):
+                return {k: _serialize(v) for k, v in obj.items()}
+            if hasattr(obj, "items") and callable(obj.items):
+                return {k: _serialize(v) for k, v in obj.items()}
+            if isinstance(obj, list):
+                return [_serialize(x) for x in obj]
+            if isinstance(obj, (int, float, str, bool, type(None))):
+                return obj
+            return str(obj)
+
+        mm_output_raw, _ = (handler._extract_audio_output(final_output)
+                            if handler else (None, None))
+        return JSONResponse({
+            "request_id": request_id,
+            "stage_output": _serialize(mm_output_raw) if mm_output_raw else None,
             "finished": getattr(final_output, "finished", True),
         })
 
