@@ -3444,10 +3444,18 @@ async def _stage_run_downstream(raw_request: Request, body: dict, request_id: st
         # Submit to engine via generate().
         # Use output_modalities=["audio"] so the engine knows this is a
         # speech/audio stage, not a text generation task.
+        # Skip detokenization — codec token IDs are not text vocabulary IDs
+        # and would overflow the tokenizer's decoder.
+        from vllm import SamplingParams
+
         generator = engine_client.generate(
             prompt={"prompt_token_ids": prompt_token_ids},
             request_id=request_id,
             output_modalities=["audio"],
+            sampling_params=SamplingParams(
+                max_tokens=65536,
+                detokenize=False,
+            ),
         )
 
         final_output = None
