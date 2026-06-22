@@ -3329,7 +3329,7 @@ async def stage_run(raw_request: Request):
         )
 
     try:
-        from vllm_omni.entrypoints.openai.protocol import OpenAICreateSpeechRequest
+        from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
 
         speech_request = OpenAICreateSpeechRequest(
             model=body.get("model", ""),
