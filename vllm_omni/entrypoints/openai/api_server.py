@@ -3441,10 +3441,13 @@ async def _stage_run_downstream(raw_request: Request, body: dict, request_id: st
         else:
             prompt_token_ids = codec_tensor.tolist()
 
-        # Submit to engine via generate()
+        # Submit to engine via generate().
+        # Use output_modalities=["audio"] so the engine knows this is a
+        # speech/audio stage, not a text generation task.
         generator = engine_client.generate(
             prompt={"prompt_token_ids": prompt_token_ids},
             request_id=request_id,
+            output_modalities=["audio"],
         )
 
         final_output = None

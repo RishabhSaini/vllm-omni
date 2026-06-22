@@ -234,6 +234,8 @@ class AsyncOmniEngine:
         # --log-stats CLI flag set by the user via OmniBase.
         self._log_stats = log_stats
 
+        self._standalone = "_standalone_stage_configs" in kwargs
+
         logger.info(f"[AsyncOmniEngine] Initializing with model {model}")
 
         # ------------------------------------------------------------------ #
@@ -395,6 +397,10 @@ class AsyncOmniEngine:
             supported_tasks.add("generate")
         if any(meta.final_output_type == "audio" for meta in self.stage_metadata):
             supported_tasks.add("speech")
+        # Standalone stages must accept generate requests even without a
+        # tokenizer (e.g., code2wav accepts pre-tokenized codec input).
+        if self._standalone:
+            supported_tasks.add("generate")
         self.supported_tasks = tuple(supported_tasks) if supported_tasks else ("generate",)
 
     def _bootstrap_orchestrator(
