@@ -3360,9 +3360,13 @@ async def stage_run(raw_request: Request):
                 return obj.cpu().tolist()
             if isinstance(obj, dict):
                 return {k: _serialize(v) for k, v in obj.items()}
+            if hasattr(obj, "items") and callable(obj.items):
+                return {k: _serialize(v) for k, v in obj.items()}
             if isinstance(obj, list):
                 return [_serialize(x) for x in obj]
-            return obj
+            if isinstance(obj, (int, float, str, bool, type(None))):
+                return obj
+            return str(obj)
 
         text_output = ""
         outputs = getattr(final_output, "outputs", None)
