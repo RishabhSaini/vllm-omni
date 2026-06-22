@@ -3423,10 +3423,15 @@ async def _stage_run_downstream(raw_request: Request, body: dict, request_id: st
 
     try:
         # Build prompt_token_ids from upstream codec output.
-        # The stage_output from the talker contains "latent" or "codes.audio"
-        # with the raw codec tokens. For code2wav, we need to flatten them
-        # into codebook-major order: [Q0_f0, Q1_f0, ..., Q15_f0, Q0_f1, ...]
-        codec_data = stage_output.get("latent") or stage_output.get("codes", {}).get("audio")
+        # The stage_output from the talker contains codec tokens under
+        # "codes.audio" (integer codec frame IDs) and hidden states under
+        # "latent" (float embeddings). Code2wav needs the codec tokens,
+        # flattened to codebook-major order.
+        codes = stage_output.get("codes", {})
+        codec_data = codes.get("audio") if isinstance(codes, dict) else None
+        if codec_data is None:
+            # Fallback: check for flat "codes.audio" key (OmegaConf dotted)
+            codec_data = stage_output.get("codes.audio")
         if codec_data is None:
             return JSONResponse(
                 {"error": "No codec data in stage_output", "request_id": request_id},
