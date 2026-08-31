@@ -3891,10 +3891,18 @@ async def _stage_run_entry(raw_request: Request, body: dict, request_id: str):
             OpenAICreateSpeechRequest,
         )
 
-        speech_fields = {"model", "input", "voice", "speed", "response_format",
-                         "ref_audio", "ref_text", "audio_reference", "language"}
-        extra = {k: v for k, v in body.items()
-                 if k in speech_fields and k not in ("model", "input", "voice")}
+        speech_fields = {
+            "model",
+            "input",
+            "voice",
+            "speed",
+            "response_format",
+            "ref_audio",
+            "ref_text",
+            "audio_reference",
+            "language",
+        }
+        extra = {k: v for k, v in body.items() if k in speech_fields and k not in ("model", "input", "voice")}
         speech_request = OpenAICreateSpeechRequest(
             model=body.get("model", ""),
             input=body.get("input", ""),
@@ -3905,7 +3913,8 @@ async def _stage_run_entry(raw_request: Request, body: dict, request_id: str):
         # Uses the internal _prepare_speech_generation (stable, 4+ internal
         # callers) to get the raw engine generator without WAV conversion.
         _, generator, _ = await handler._prepare_speech_generation(
-            speech_request, request_id=request_id,
+            speech_request,
+            request_id=request_id,
         )
 
         final_output = None
@@ -3942,11 +3951,13 @@ async def _stage_run_entry(raw_request: Request, body: dict, request_id: str):
                 return obj
             return str(obj)
 
-        return JSONResponse({
-            "request_id": request_id,
-            "stage_output": _serialize(mm_output) if mm_output else None,
-            "finished": getattr(final_output, "finished", True),
-        })
+        return JSONResponse(
+            {
+                "request_id": request_id,
+                "stage_output": _serialize(mm_output) if mm_output else None,
+                "finished": getattr(final_output, "finished", True),
+            }
+        )
 
     except ValueError as e:
         return JSONResponse(
@@ -3992,8 +4003,10 @@ async def _stage_run_downstream(raw_request: Request, body: dict, request_id: st
         flat_len = sum(len(row) for row in codec_data) if isinstance(codec_data[0], list) else len(codec_data)
         if flat_len > MAX_CODEC_ELEMENTS:
             return JSONResponse(
-                {"error": f"Codec data too large ({flat_len} elements, max {MAX_CODEC_ELEMENTS})",
-                 "request_id": request_id},
+                {
+                    "error": f"Codec data too large ({flat_len} elements, max {MAX_CODEC_ELEMENTS})",
+                    "request_id": request_id,
+                },
                 status_code=HTTPStatus.BAD_REQUEST.value,
             )
 
@@ -4046,11 +4059,14 @@ async def _stage_run_downstream(raw_request: Request, body: dict, request_id: st
                     break
 
         if audio_data is None:
-            return JSONResponse({
-                "request_id": request_id,
-                "stage_output": None,
-                "error": "No audio output",
-            }, status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value)
+            return JSONResponse(
+                {
+                    "request_id": request_id,
+                    "stage_output": None,
+                    "error": "No audio output",
+                },
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+            )
 
         if isinstance(audio_data, torch.Tensor):
             audio_np = audio_data.cpu().float().numpy()

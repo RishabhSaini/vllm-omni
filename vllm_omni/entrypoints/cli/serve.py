@@ -129,7 +129,11 @@ class OmniServeCommand(CLISubcommand):
             raise ValueError("--standalone requires --stage-id")
         if standalone and args.headless:
             raise ValueError("--standalone and --headless are mutually exclusive")
-        if args.stage_id is not None and not standalone and (args.omni_master_address is None or args.omni_master_port is None):
+        if (
+            args.stage_id is not None
+            and not standalone
+            and (args.omni_master_address is None or args.omni_master_port is None)
+        ):
             raise ValueError("--stage-id requires --omni-master-address and --omni-master-port (or use --standalone)")
 
         # --omni-replica-address is only consulted in run_headless(); reject it
@@ -969,10 +973,10 @@ async def run_standalone(args: TrackingNamespace) -> None:
     args._standalone_stage_configs = standalone_configs
     args._standalone = True
     if hasattr(args, "explicit_keys"):
-        args.explicit_keys = (
-            (args.explicit_keys | {"_standalone_stage_configs", "_standalone", "async_chunk"})
-            - {"stage_id", "standalone"}
-        )
+        args.explicit_keys = (args.explicit_keys | {"_standalone_stage_configs", "_standalone", "async_chunk"}) - {
+            "stage_id",
+            "standalone",
+        }
 
     await omni_run_server(args)
 

@@ -1266,8 +1266,7 @@ class AsyncOmniEngine:
         standalone_configs = kwargs.pop("_standalone_stage_configs", None)
         if standalone_configs is not None:
             config_path = kwargs.pop("deploy_config", None) or model
-            for key in ("strategy_config", "stage_overrides",
-                        "stage_configs_path", "stage_configs"):
+            for key in ("strategy_config", "stage_overrides", "stage_configs_path", "stage_configs"):
                 kwargs.pop(key, None)
             return config_path, standalone_configs
 
