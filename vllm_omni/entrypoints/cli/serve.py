@@ -116,7 +116,7 @@ class OmniServeCommand(CLISubcommand):
             if explicit_keys is not None:
                 args.explicit_keys = explicit_keys | {"model_config"}
 
-        if getattr(args, "standalone", False):
+        if args.standalone:
             uvloop.run(run_standalone(args))
         elif args.headless:
             run_headless(args)
@@ -124,7 +124,7 @@ class OmniServeCommand(CLISubcommand):
             uvloop.run(omni_run_server(args))
 
     def validate(self, args: argparse.Namespace) -> None:
-        standalone = getattr(args, "standalone", False)
+        standalone = args.standalone
         if standalone and args.stage_id is None:
             raise ValueError("--standalone requires --stage-id")
         if standalone and args.headless:
@@ -945,6 +945,7 @@ async def run_standalone(args: TrackingNamespace) -> None:
     from vllm_omni.entrypoints.utils import (
         extract_standalone_stage_config,
         load_and_resolve_stage_configs,
+        parse_stage_overrides,
     )
 
     model = args.model
@@ -953,14 +954,21 @@ async def run_standalone(args: TrackingNamespace) -> None:
     if not model:
         raise ValueError("--model is required")
 
+    if args.async_chunk:
+        logger.warning(
+            "[Standalone] async_chunk is not supported in standalone mode and will be disabled. "
+            "Standalone stages use full-payload transfer."
+        )
+
     args_dict = args.get_explicit_kwargs_dict()
+    stage_overrides = parse_stage_overrides(args_dict.get("stage_overrides"))
 
     config_path, stage_configs, _ = load_and_resolve_stage_configs(
         model,
         dict(args_dict),
-        trust_remote_code=getattr(args, "trust_remote_code", None),
+        trust_remote_code=args.trust_remote_code,
         deploy_config_path=args_dict.get("deploy_config"),
-        stage_overrides=None,
+        stage_overrides=stage_overrides,
     )
 
     standalone_configs = extract_standalone_stage_config(stage_configs, stage_id)
@@ -972,11 +980,10 @@ async def run_standalone(args: TrackingNamespace) -> None:
     args.async_chunk = False
     args._standalone_stage_configs = standalone_configs
     args._standalone = True
-    if hasattr(args, "explicit_keys"):
-        args.explicit_keys = (args.explicit_keys | {"_standalone_stage_configs", "_standalone", "async_chunk"}) - {
-            "stage_id",
-            "standalone",
-        }
+    args.explicit_keys = (args.explicit_keys | {"_standalone_stage_configs", "_standalone", "async_chunk"}) - {
+        "stage_id",
+        "standalone",
+    }
 
     await omni_run_server(args)
 

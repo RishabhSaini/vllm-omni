@@ -373,6 +373,10 @@ class AsyncOmniEngine:
             supported_tasks.add("generate")
         if any(meta.final_output_type == "audio" for meta in self.stage_metadata):
             supported_tasks.add("speech")
+        # Standalone downstream stages (e.g., code2wav) lack a tokenizer and
+        # are not detected as comprehension models, so "generate" is not added
+        # by the check above. They still must accept generate requests with
+        # pre-tokenized prompt_token_ids from the upstream stage.
         if self._standalone:
             supported_tasks.add("generate")
         self.supported_tasks = tuple(supported_tasks) if supported_tasks else ("generate",)
