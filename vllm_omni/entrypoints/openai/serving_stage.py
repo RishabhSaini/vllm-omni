@@ -17,7 +17,6 @@ import torch
 from fastapi.responses import JSONResponse, Response
 from vllm.logger import init_logger
 
-from vllm_omni.distributed.omni_connectors.utils.serialization import OmniSerializer
 from vllm_omni.entrypoints.openai.audio_utils_mixin import AudioMixin
 from vllm_omni.entrypoints.openai.protocol.audio import CreateAudio
 
@@ -29,6 +28,23 @@ logger = init_logger(__name__)
 MAX_CODEC_ELEMENTS = 2 * 1024 * 1024
 
 _audio_mixin = AudioMixin()
+
+
+def _to_json_safe(obj: Any) -> Any:
+    """Recursively convert to JSON-serializable types."""
+    if isinstance(obj, torch.Tensor):
+        return obj.cpu().tolist()
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if hasattr(obj, "items") and callable(obj.items):
+        return {k: _to_json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_json_safe(x) for x in obj]
+    if isinstance(obj, (int, float, str, bool, type(None))):
+        return obj
+    return str(obj)
 
 
 def _extract_multimodal_output(final_output: Any) -> Any | None:
@@ -89,11 +105,14 @@ async def run_entry_speech(
             len(final_output.outputs),
         )
 
-    serialized = OmniSerializer.serialize(mm_output) if mm_output else None
+    # Serialize to JSON-safe types. OmniSerializer produces msgpack bytes
+    # which is more efficient but requires msgpack-aware clients. JSON is
+    # used here for compatibility; msgpack transport is follow-on work.
+    stage_output = _to_json_safe(mm_output) if mm_output else None
     return JSONResponse(
         {
             "request_id": request_id,
-            "stage_output": OmniSerializer.deserialize(serialized) if serialized else None,
+            "stage_output": stage_output,
             "finished": getattr(final_output, "finished", True),
         }
     )
