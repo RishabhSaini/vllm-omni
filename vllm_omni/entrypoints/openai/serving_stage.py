@@ -1,0 +1,187 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
+"""Standalone stage serving: /v1/stage/run endpoint handlers.
+
+Entry handler runs the speech pipeline and returns raw multimodal_output
+via OmniSerializer. Downstream handler accepts upstream stage_output,
+runs the engine, and returns audio via AudioMixin.create_audio.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import torch
+from fastapi.responses import JSONResponse, Response
+from vllm.logger import init_logger
+
+from vllm_omni.distributed.omni_connectors.utils.serialization import OmniSerializer
+from vllm_omni.entrypoints.openai.audio_utils_mixin import AudioMixin
+from vllm_omni.entrypoints.openai.protocol.audio import CreateAudio
+
+if TYPE_CHECKING:
+    from fastapi import Request
+
+logger = init_logger(__name__)
+
+MAX_CODEC_ELEMENTS = 2 * 1024 * 1024
+
+_audio_mixin = AudioMixin()
+
+
+def _extract_multimodal_output(final_output: Any) -> Any | None:
+    """Extract the first non-None multimodal_output from engine output."""
+    for co in getattr(final_output, "outputs", []):
+        mm = getattr(co, "multimodal_output", None)
+        if mm:
+            return mm
+    return None
+
+
+def _extract_sample_rate(mm: Any) -> int:
+    """Read sample rate from multimodal output, defaulting to 24kHz."""
+    sr_raw = mm.get("sr") if hasattr(mm, "get") else None
+    if sr_raw is None:
+        return 24000
+    sr_val = sr_raw[-1] if isinstance(sr_raw, list) and sr_raw else sr_raw
+    return sr_val.item() if hasattr(sr_val, "item") else int(sr_val)
+
+
+async def run_entry_speech(
+    raw_request: Request,
+    handler: Any,
+    body: dict,
+    request_id: str,
+) -> JSONResponse:
+    """Speech entry stage: run speech generation, return serialized multimodal_output."""
+    from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
+
+    speech_request = OpenAICreateSpeechRequest(
+        model=body.get("model", ""),
+        input=body.get("input", ""),
+        voice=body.get("voice", ""),
+    )
+
+    engine_client = raw_request.app.state.engine_client
+    _, generator, _ = await handler._prepare_speech_generation(
+        speech_request,
+        request_id=request_id,
+    )
+
+    final_output = None
+    try:
+        async for output in generator:
+            final_output = output
+    except asyncio.CancelledError:
+        await engine_client.abort(request_id)
+        raise
+
+    if final_output is None:
+        raise ValueError("No output generated")
+
+    mm_output = _extract_multimodal_output(final_output)
+    if mm_output is None and len(getattr(final_output, "outputs", [])) > 1:
+        logger.warning(
+            "[stage_run] request %s produced %d outputs but none had multimodal_output",
+            request_id,
+            len(final_output.outputs),
+        )
+
+    serialized = OmniSerializer.serialize(mm_output) if mm_output else None
+    return JSONResponse(
+        {
+            "request_id": request_id,
+            "stage_output": OmniSerializer.deserialize(serialized) if serialized else None,
+            "finished": getattr(final_output, "finished", True),
+        }
+    )
+
+
+async def run_downstream_audio(
+    raw_request: Request,
+    body: dict,
+    request_id: str,
+) -> Response | JSONResponse:
+    """Final audio stage: accept codec tokens, return WAV via AudioMixin."""
+    from vllm import SamplingParams
+
+    engine_client = raw_request.app.state.engine_client
+    stage_output = body["stage_output"]
+
+    prompt_token_ids = _parse_codec_tokens(stage_output, request_id)
+
+    generator = engine_client.generate(
+        prompt={"prompt_token_ids": prompt_token_ids},
+        request_id=request_id,
+        output_modalities=["audio"],
+        sampling_params=SamplingParams(
+            max_tokens=stage_output.get("max_tokens", 65536),
+            detokenize=False,
+        ),
+    )
+
+    final_output = None
+    try:
+        async for output in generator:
+            final_output = output
+    except asyncio.CancelledError:
+        await engine_client.abort(request_id)
+        raise
+
+    if final_output is None:
+        raise ValueError("No output generated")
+
+    mm_output = _extract_multimodal_output(final_output)
+    if mm_output is None:
+        raise ValueError("No audio in engine output")
+
+    audio_data = mm_output.get("audio") if hasattr(mm_output, "get") else None
+    if audio_data is None:
+        raise ValueError("No audio key in multimodal output")
+
+    if isinstance(audio_data, torch.Tensor):
+        audio_np = audio_data.cpu().float().numpy()
+    elif isinstance(audio_data, np.ndarray):
+        audio_np = audio_data.astype(np.float32)
+    else:
+        audio_np = np.array(audio_data, dtype=np.float32)
+
+    sample_rate = _extract_sample_rate(mm_output)
+    audio_response = _audio_mixin.create_audio(
+        CreateAudio(
+            audio_tensor=audio_np,
+            sample_rate=sample_rate,
+            response_format="wav",
+            base64_encode=False,
+        )
+    )
+
+    return Response(
+        content=audio_response.audio_data,
+        media_type=audio_response.media_type,
+        headers={"X-Request-Id": request_id},
+    )
+
+
+def _parse_codec_tokens(stage_output: dict, request_id: str) -> list[int]:
+    """Extract, validate, and flatten codec tokens from stage_output.
+
+    Raises ValueError on invalid input instead of returning error responses.
+    """
+    codes = stage_output.get("codes", {})
+    codec_data = codes.get("audio") if isinstance(codes, dict) else None
+    if codec_data is None:
+        codec_data = stage_output.get("codes.audio")
+    if not codec_data:
+        raise ValueError("No codec data in stage_output")
+
+    flat_len = sum(len(row) for row in codec_data) if isinstance(codec_data[0], list) else len(codec_data)
+    if flat_len > MAX_CODEC_ELEMENTS:
+        raise ValueError(f"Codec data too large ({flat_len} elements, max {MAX_CODEC_ELEMENTS})")
+
+    codec_tensor = torch.tensor(codec_data, dtype=torch.long)
+    if codec_tensor.ndim == 2:
+        return codec_tensor.transpose(0, 1).reshape(-1).tolist()
+    return codec_tensor.tolist()
