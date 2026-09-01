@@ -608,12 +608,18 @@ def load_and_resolve_stage_configs(
 def extract_standalone_stage_config(
     stage_configs: list,
     stage_id: int,
+    *,
+    clear_connectors: bool = True,
 ) -> list:
     """Extract a single stage from a multi-stage config list for standalone operation.
 
-    Adjusts the stage for independent execution: renumbers to stage_id 0,
-    marks as final output, clears input_sources, and strips next-stage
-    transform references. Connector and sampling config are preserved.
+    Args:
+        stage_configs: Full pipeline OmegaConf config list.
+        stage_id: Which stage to extract.
+        clear_connectors: If True (default), clear connectors, renumber
+            stage_id to 0, and strip next-stage transforms. If False,
+            preserve connectors and original stage_id for connector-based
+            transfer (omni disagg).
     """
     from omegaconf import OmegaConf
 
@@ -626,7 +632,6 @@ def extract_standalone_stage_config(
         available = [int(c.stage_id) for c in stage_configs]
         raise ValueError(f"stage_id {stage_id} not found (available: {available})")
 
-    target["stage_id"] = 0
     target["final_output"] = True
     if not target.get("final_output_type"):
         engine_args = target.get("engine_args", {})
@@ -635,17 +640,21 @@ def extract_standalone_stage_config(
             target["final_output_type"] = "audio"
         elif eot == "latent":
             target["final_output_type"] = "latent"
-    target.pop("input_sources", None)
-    target.pop("input_connectors", None)
-    target.pop("output_connectors", None)
 
     engine_args = target.get("engine_args", {})
     engine_args["async_chunk"] = False
-    for key in (
-        "custom_process_next_stage_input_func",
-        "async_chunk_process_next_stage_input_func",
-    ):
-        engine_args.pop(key, None)
+
+    if clear_connectors:
+        target["stage_id"] = 0
+        target.pop("input_sources", None)
+        target.pop("input_connectors", None)
+        target.pop("output_connectors", None)
+        for key in (
+            "custom_process_next_stage_input_func",
+            "async_chunk_process_next_stage_input_func",
+        ):
+            engine_args.pop(key, None)
+
     target["engine_args"] = engine_args
 
     return [create_config(target)]

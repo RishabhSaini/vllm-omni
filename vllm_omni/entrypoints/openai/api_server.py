@@ -3863,9 +3863,30 @@ async def stage_run(raw_request: Request):
     body = await raw_request.json()
     request_id = body.get("request_id", f"stage-{_uuid.uuid4().hex[:8]}")
 
-    if "stage_output" in body and body["stage_output"] is not None:
-        return await _stage_run_downstream(raw_request, body, request_id)
-    return await _stage_run_entry(raw_request, body, request_id)
+    try:
+        if "stage_output" in body and body["stage_output"] is not None:
+            from vllm_omni.entrypoints.openai.serving_stage import (
+                run_downstream_audio,
+                run_downstream_intermediate,
+            )
+
+            output_mode = body.get("output_mode", "final")
+            if output_mode == "intermediate":
+                return await run_downstream_intermediate(raw_request, body, request_id)
+            return await run_downstream_audio(raw_request, body, request_id)
+
+        return await _stage_run_entry(raw_request, body, request_id)
+
+    except ValueError as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.BAD_REQUEST.value,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"error": str(e), "request_id": request_id},
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR.value,
+        )
 
 
 async def _stage_run_entry(raw_request: Request, body: dict, request_id: str):
