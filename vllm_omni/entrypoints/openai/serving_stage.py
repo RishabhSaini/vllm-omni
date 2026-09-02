@@ -2,9 +2,9 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
 """Standalone stage serving: /v1/stage/run endpoint handlers.
 
-Entry handler runs the speech pipeline and returns raw multimodal_output
-via OmniSerializer. Downstream handler accepts upstream stage_output,
-runs the engine, and returns audio via AudioMixin.create_audio.
+Entry handler runs the speech pipeline and returns raw multimodal_output.
+Downstream handler accepts upstream stage_output, runs the engine, and
+returns audio via AudioMixin.create_audio.
 """
 
 from __future__ import annotations
@@ -74,11 +74,15 @@ async def run_entry_speech(
     """Speech entry stage: run speech generation, return serialized multimodal_output."""
     from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
 
-    speech_request = OpenAICreateSpeechRequest(
-        model=body.get("model", ""),
-        input=body.get("input", ""),
-        voice=body.get("voice", ""),
-    )
+    speech_request = OpenAICreateSpeechRequest.model_validate(body)
+
+    if speech_request.ref_audio is not None:
+        raise ValueError(
+            "ref_audio is not supported in standalone mode. Standalone stages "
+            "bypass the talker2code2wav payload contract (frame filtering, ref "
+            "code prepending, ICL conditioning). Use co-located mode for "
+            "voice cloning / Base task requests."
+        )
 
     engine_client = raw_request.app.state.engine_client
     _, generator, _ = await handler._prepare_speech_generation(
@@ -98,22 +102,19 @@ async def run_entry_speech(
         raise ValueError("No output generated")
 
     mm_output = _extract_multimodal_output(final_output)
-    if mm_output is None and len(getattr(final_output, "outputs", [])) > 1:
+    if mm_output is None and len(final_output.outputs) > 1:
         logger.warning(
             "[stage_run] request %s produced %d outputs but none had multimodal_output",
             request_id,
             len(final_output.outputs),
         )
 
-    # Serialize to JSON-safe types. OmniSerializer produces msgpack bytes
-    # which is more efficient but requires msgpack-aware clients. JSON is
-    # used here for compatibility; msgpack transport is follow-on work.
     stage_output = _to_json_safe(mm_output) if mm_output else None
     return JSONResponse(
         {
             "request_id": request_id,
             "stage_output": stage_output,
-            "finished": getattr(final_output, "finished", True),
+            "finished": final_output.finished,
         }
     )
 
@@ -131,14 +132,16 @@ async def run_downstream_audio(
 
     prompt_token_ids = _parse_codec_tokens(stage_output, request_id)
 
+    # max_tokens caps generation length. The stage's deploy YAML sets the real
+    # limit (e.g., 65536 for Qwen3-TTS code2wav). The caller can override
+    # via the request body. vLLM's default (16) is too low for codec decoding.
+    max_tokens = body.get("max_tokens", 65536)
+
     generator = engine_client.generate(
         prompt={"prompt_token_ids": prompt_token_ids},
         request_id=request_id,
         output_modalities=["audio"],
-        sampling_params=SamplingParams(
-            max_tokens=stage_output.get("max_tokens", 65536),
-            detokenize=False,
-        ),
+        sampling_params=SamplingParams(max_tokens=max_tokens, detokenize=False),
     )
 
     final_output = None
@@ -200,7 +203,7 @@ def _parse_codec_tokens(stage_output: dict, request_id: str) -> list[int]:
     if flat_len > MAX_CODEC_ELEMENTS:
         raise ValueError(f"Codec data too large ({flat_len} elements, max {MAX_CODEC_ELEMENTS})")
 
-    codec_tensor = torch.tensor(codec_data, dtype=torch.long)
-    if codec_tensor.ndim == 2:
-        return codec_tensor.transpose(0, 1).reshape(-1).tolist()
-    return codec_tensor.tolist()
+    if isinstance(codec_data[0], list):
+        num_quantizers = len(codec_data[0])
+        return [codec_data[frame][q] for q in range(num_quantizers) for frame in range(len(codec_data))]
+    return list(codec_data)

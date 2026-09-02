@@ -40,11 +40,11 @@ deployed, scaled, and managed independently by external infrastructure.
 
 ```bash
 # Stage 0 (talker) on GPU 0
-CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS --omni \
+CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni \
     --standalone --stage-id 0 --port 8000 --trust-remote-code
 
 # Stage 1 (code2wav) on GPU 1
-CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS --omni \
+CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni \
     --standalone --stage-id 1 --port 8001 --trust-remote-code
 ```
 

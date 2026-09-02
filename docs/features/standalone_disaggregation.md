@@ -11,17 +11,17 @@ coordinator:
 
 ```bash
 # Terminal 1: talker (stage 0)
-CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS --omni \
+CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni \
     --standalone --stage-id 0 --port 8000 --trust-remote-code
 
 # Terminal 2: code2wav (stage 1)
-CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS --omni \
+CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni \
     --standalone --stage-id 1 --port 8001 --trust-remote-code
 
 # Terminal 3: chain stages
 python standalone_disagg_client.py \
     --text "Hello, how are you?" \
-    --model Qwen/Qwen3-TTS --voice vivian
+    --model Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --voice vivian
 ```
 
 ## `/v1/stage/run` endpoint
@@ -35,7 +35,7 @@ multimodal output as serialized JSON. Currently speech-only.
 ```bash
 curl http://localhost:8000/v1/stage/run \
   -H "Content-Type: application/json" \
-  -d '{"model": "Qwen/Qwen3-TTS", "input": "Hello", "voice": "vivian"}'
+  -d '{"model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "input": "Hello", "voice": "vivian"}'
 # → {"stage_output": {"codes": {"audio": [[...], ...]}, ...}, "request_id": "..."}
 ```
 
@@ -62,7 +62,7 @@ import httpx
 with httpx.Client(timeout=120) as client:
     # Step 1: talker
     resp = client.post("http://localhost:8000/v1/stage/run", json={
-        "model": "Qwen/Qwen3-TTS", "input": "Hello", "voice": "vivian",
+        "model": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", "input": "Hello", "voice": "vivian",
     })
     talker_result = resp.json()
 
