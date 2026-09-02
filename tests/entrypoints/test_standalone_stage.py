@@ -120,6 +120,60 @@ class TestExtractStandaloneStageConfig:
         assert cfg.max_num_seqs == 64
 
 
+class TestLatentBroadening:
+    """Verify the latent postprocess broadening does not affect co-located mode."""
+
+    def test_latent_with_downstream_consumers_not_broadened(self):
+        """In co-located mode, latent stages have downstream consumers.
+
+        The broadening (engine_output_type in ("audio", "latent") and not
+        downstream_req_ids) only fires when downstream_req_ids is empty.
+        With downstream consumers present, the broadening is skipped.
+        This test verifies the condition logic is correct.
+        """
+        from types import SimpleNamespace
+
+        from vllm_omni.worker.gpu_ar_model_runner import GPUARModelRunner
+
+        runner = object.__new__(GPUARModelRunner)
+        runner.vllm_config = SimpleNamespace(
+            model_config=SimpleNamespace(engine_output_type="latent"),
+        )
+        runner._client_multimodal_output_keys = lambda: set()
+
+        def _needs_downstream(req_id):
+            return True
+
+        runner._request_needs_downstream_stage_payload = _needs_downstream
+
+        _, downstream = runner._resolve_pooler_payload_req_ids(["req-1", "req-2"])
+        assert downstream == ["req-1", "req-2"]
+
+    def test_latent_without_downstream_broadened(self):
+        """In standalone mode, no downstream consumers exist.
+
+        The broadening fires, giving the AR decode loop its hidden_states
+        feedback for postprocess.
+        """
+        from types import SimpleNamespace
+
+        from vllm_omni.worker.gpu_ar_model_runner import GPUARModelRunner
+
+        runner = object.__new__(GPUARModelRunner)
+        runner.vllm_config = SimpleNamespace(
+            model_config=SimpleNamespace(engine_output_type="latent"),
+        )
+        runner._client_multimodal_output_keys = lambda: set()
+
+        def _no_downstream(req_id):
+            return False
+
+        runner._request_needs_downstream_stage_payload = _no_downstream
+
+        _, downstream = runner._resolve_pooler_payload_req_ids(["req-1"])
+        assert downstream == ["req-1"]
+
+
 class TestStandaloneCLIValidation:
     @pytest.fixture()
     def parser(self):

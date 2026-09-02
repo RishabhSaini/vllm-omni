@@ -464,6 +464,8 @@ class GPUARModelRunner(OmniGPUModelRunner, OmniConnectorModelRunnerMixin, Duplex
             downstream_req_ids = req_ids_output_copy
         # Single-stage or standalone AR stages need multimodal payloads for
         # postprocess even when no downstream stage exists in this process.
+        # In co-located multi-stage, latent stages always have downstream
+        # consumers so downstream_req_ids is non-empty and this is skipped.
         elif engine_output_type in ("audio", "latent") and not downstream_req_ids:
             downstream_req_ids = req_ids_output_copy
         return engine_output_type, downstream_req_ids

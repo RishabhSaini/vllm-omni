@@ -635,6 +635,8 @@ def extract_standalone_stage_config(
             target["final_output_type"] = "audio"
         elif eot == "latent":
             target["final_output_type"] = "latent"
+        elif eot:
+            raise ValueError(f"Unsupported engine_output_type {eot!r} for standalone stage. Supported: audio, latent.")
     target.pop("input_sources", None)
     target.pop("input_connectors", None)
     target.pop("output_connectors", None)

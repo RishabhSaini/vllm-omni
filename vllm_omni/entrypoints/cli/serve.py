@@ -969,6 +969,7 @@ async def run_standalone(args: TrackingNamespace) -> None:
         trust_remote_code=args.trust_remote_code,
         deploy_config_path=args_dict.get("deploy_config"),
         stage_overrides=stage_overrides,
+        strategy_config_path=args_dict.get("strategy_config"),
     )
 
     standalone_configs = extract_standalone_stage_config(stage_configs, stage_id)

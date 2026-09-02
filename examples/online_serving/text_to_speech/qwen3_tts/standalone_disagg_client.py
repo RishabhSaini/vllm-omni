@@ -5,12 +5,13 @@
 Reference coordinator that calls talker (stage 0) then forwards codec tokens
 to code2wav (stage 1) to produce audio.
 
-Start the servers first:
-    ./run_standalone_servers.sh
+Start the servers first (see docs/features/standalone_disaggregation.md):
+    CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni --standalone --stage-id 0 --port 8000
+    CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni --standalone --stage-id 1 --port 8001
 
 Examples:
-    python standalone_disagg_client.py --text "Hello, how are you?"
-    python standalone_disagg_client.py --text "Hello" --voice vivian -o hello.wav
+    python standalone_disagg_client.py --text "Hello, how are you?" --model Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
+    python standalone_disagg_client.py --text "Hello" --voice vivian -o hello.wav --model Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice
 """
 
 import argparse
@@ -39,7 +40,7 @@ def main():
     parser = argparse.ArgumentParser(description="Disaggregated TTS via standalone stages")
     parser.add_argument("--text", required=True, help="Text to synthesize")
     parser.add_argument("--voice", default="", help="Speaker voice name")
-    parser.add_argument("--model", default="Qwen/Qwen3-TTS", help="Model name")
+    parser.add_argument("--model", default="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", help="Model name")
     parser.add_argument("--talker-url", default=DEFAULT_TALKER_URL, help="Talker stage URL")
     parser.add_argument("--code2wav-url", default=DEFAULT_CODE2WAV_URL, help="Code2wav stage URL")
     parser.add_argument("-o", "--output", default="output.wav", help="Output WAV path")

@@ -3845,7 +3845,7 @@ async def omni_wakeup(request: OmniWakeupRequest, raw_request: Request):
     return {"status": "SUCCESS", "acks": [dataclasses.asdict(a) if dataclasses.is_dataclass(a) else a for a in acks]}
 
 
-@router.post("/v1/stage/run")
+@router.post("/v1/stage/run", dependencies=[Depends(validate_json_request)])
 @with_cancellation
 async def stage_run(raw_request: Request):
     """Run a standalone stage.
@@ -3858,8 +3858,6 @@ async def stage_run(raw_request: Request):
     upstream, runs the engine, returns WAV audio.
     """
     # _standalone is set on AsyncOmniEngine, accessed via AsyncOmni.engine.
-    # getattr is required because the engine_client may be AsyncOmni (with .engine)
-    # or AsyncOmniEngine directly, and _standalone is an internal attribute.
     engine_client = raw_request.app.state.engine_client
     engine = getattr(engine_client, "engine", engine_client)
     if not getattr(engine, "_standalone", False):
@@ -3868,11 +3866,23 @@ async def stage_run(raw_request: Request):
             status_code=HTTPStatus.NOT_FOUND.value,
         )
 
-    body = await raw_request.json()
-    request_id = body.get("request_id", f"stage-{_uuid.uuid4().hex[:8]}")
+    try:
+        body = await raw_request.json()
+    except Exception:
+        return JSONResponse(
+            {"error": "Invalid JSON body"},
+            status_code=HTTPStatus.BAD_REQUEST.value,
+        )
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"error": "Request body must be a JSON object"},
+            status_code=HTTPStatus.BAD_REQUEST.value,
+        )
+
+    request_id = body.get("request_id") or f"stage-{_uuid.uuid4().hex[:8]}"
 
     try:
-        if "stage_output" in body and body["stage_output"] is not None:
+        if body.get("stage_output") is not None:
             return await run_downstream_audio(raw_request, body, request_id)
 
         handler = Omnispeech(raw_request)
