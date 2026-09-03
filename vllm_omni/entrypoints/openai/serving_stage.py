@@ -175,7 +175,8 @@ async def run_downstream_audio(
         CreateAudio(
             audio_tensor=audio_np,
             sample_rate=sample_rate,
-            response_format="wav",
+            response_format=body.get("response_format") or "wav",
+            speed=float(body["speed"]) if body.get("speed") is not None else 1.0,
             base64_encode=False,
         )
     )
