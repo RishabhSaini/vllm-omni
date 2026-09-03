@@ -43,7 +43,9 @@ def main():
     parser.add_argument("--model", default="Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice", help="Model name")
     parser.add_argument("--talker-url", default=DEFAULT_TALKER_URL, help="Talker stage URL")
     parser.add_argument("--code2wav-url", default=DEFAULT_CODE2WAV_URL, help="Code2wav stage URL")
-    parser.add_argument("-o", "--output", default="output.wav", help="Output WAV path")
+    parser.add_argument("--response-format", default="wav", help="Audio format (wav, mp3, flac, pcm, opus)")
+    parser.add_argument("--speed", type=float, default=1.0, help="Playback speed (0.25-4.0)")
+    parser.add_argument("-o", "--output", default="output.wav", help="Output path")
     parser.add_argument("--timeout", type=int, default=120, help="Per-stage timeout (seconds)")
     args = parser.parse_args()
 
@@ -54,7 +56,13 @@ def main():
         resp = _post(
             client,
             f"{args.talker_url}/v1/stage/run",
-            {"model": args.model, "input": args.text, "voice": args.voice},
+            {
+                "model": args.model,
+                "input": args.text,
+                "voice": args.voice,
+                "response_format": args.response_format,
+                "speed": args.speed,
+            },
             "Talker",
         )
         talker_result = resp.json()
@@ -71,13 +79,16 @@ def main():
         # Step 2: code2wav (downstream mode)
         print(f"[2/2] Code2wav @ {args.code2wav_url} ...")
         t2 = time.time()
+        downstream_body = {
+            "stage_output": stage_output,
+            "request_id": talker_result.get("request_id", "disagg"),
+            "response_format": args.response_format,
+            "speed": args.speed,
+        }
         resp = _post(
             client,
             f"{args.code2wav_url}/v1/stage/run",
-            {
-                "stage_output": stage_output,
-                "request_id": talker_result.get("request_id", "disagg"),
-            },
+            downstream_body,
             "Code2wav",
         )
         t3 = time.time()
