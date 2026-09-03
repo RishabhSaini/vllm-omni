@@ -56,6 +56,33 @@ def _extract_multimodal_output(final_output: Any) -> Any | None:
     return None
 
 
+def _clean_codec_frames(mm_output: Any) -> Any:
+    """Filter invalid codec frames from multimodal output before serialization.
+
+    Drops frames with any negative value (padding) or all-zero values
+    (prefill padding, EOS). Operates on the tensor before JSON conversion.
+    """
+    codes = mm_output.get("codes") if hasattr(mm_output, "get") else None
+    if codes is None:
+        return mm_output
+    audio = codes.get("audio") if hasattr(codes, "get") else None
+    if not isinstance(audio, torch.Tensor) or audio.ndim != 2 or audio.numel() == 0:
+        return mm_output
+    valid = (audio >= 0).all(dim=1) & audio.any(dim=1)
+    filtered = audio[valid]
+    if filtered.shape[0] < audio.shape[0]:
+        logger.debug(
+            "[stage_run] filtered %d/%d invalid codec frames",
+            audio.shape[0] - filtered.shape[0],
+            audio.shape[0],
+        )
+    if hasattr(codes, "__setitem__"):
+        codes["audio"] = filtered
+    else:
+        codes.audio = filtered
+    return mm_output
+
+
 def _extract_sample_rate(mm: Any) -> int:
     """Read sample rate from multimodal output, defaulting to 24kHz."""
     sr_raw = mm.get("sr") if hasattr(mm, "get") else None
@@ -109,6 +136,8 @@ async def run_entry_speech(
             len(final_output.outputs),
         )
 
+    if mm_output is not None:
+        mm_output = _clean_codec_frames(mm_output)
     stage_output = _to_json_safe(mm_output) if mm_output else None
     return JSONResponse(
         {
