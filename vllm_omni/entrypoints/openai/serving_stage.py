@@ -111,10 +111,17 @@ async def run_entry_speech(
             "voice cloning / Base task requests."
         )
     engine_client = raw_request.app.state.engine_client
-    _, generator, _ = await handler._prepare_speech_generation(
+    _, generator, tts_params = await handler._prepare_speech_generation(
         speech_request,
         request_id=request_id,
     )
+
+    if tts_params.get("ref_audio"):
+        raise ValueError(
+            "Voice cloning is not supported in standalone mode. The resolved "
+            "voice acquires reference conditioning that requires the co-located "
+            "payload contract. Use co-located mode for this voice."
+        )
 
     final_output = None
     try:
