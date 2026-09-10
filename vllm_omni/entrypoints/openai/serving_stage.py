@@ -110,7 +110,6 @@ async def run_entry_speech(
             "code prepending, ICL conditioning). Use co-located mode for "
             "voice cloning / Base task requests."
         )
-
     engine_client = raw_request.app.state.engine_client
     _, generator, _ = await handler._prepare_speech_generation(
         speech_request,
@@ -235,5 +234,13 @@ def _parse_codec_tokens(stage_output: dict, request_id: str) -> list[int]:
 
     if isinstance(codec_data[0], list):
         num_quantizers = len(codec_data[0])
+        if num_quantizers == 0:
+            raise ValueError("Codec frames have zero quantizers")
+        for i, row in enumerate(codec_data):
+            if len(row) != num_quantizers:
+                raise ValueError(
+                    f"Ragged codec data at frame {i}: expected {num_quantizers} "
+                    f"quantizers, got {len(row)}"
+                )
         return [codec_data[frame][q] for q in range(num_quantizers) for frame in range(len(codec_data))]
     return list(codec_data)

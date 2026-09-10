@@ -10,6 +10,7 @@ from typing import Any, get_args, get_origin
 from vllm.logger import init_logger
 from vllm.sampling_params import RequestOutputKind, SamplingParams
 
+from vllm_omni.config.yaml_util import create_config
 from vllm_omni.entrypoints.stage_utils import _to_dict
 from vllm_omni.inputs.data import OmniSamplingParams
 
