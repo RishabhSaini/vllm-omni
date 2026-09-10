@@ -239,8 +239,7 @@ def _parse_codec_tokens(stage_output: dict, request_id: str) -> list[int]:
         for i, row in enumerate(codec_data):
             if len(row) != num_quantizers:
                 raise ValueError(
-                    f"Ragged codec data at frame {i}: expected {num_quantizers} "
-                    f"quantizers, got {len(row)}"
+                    f"Ragged codec data at frame {i}: expected {num_quantizers} quantizers, got {len(row)}"
                 )
         return [codec_data[frame][q] for q in range(num_quantizers) for frame in range(len(codec_data))]
     return list(codec_data)

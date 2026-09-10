@@ -5,7 +5,7 @@
 Reference coordinator that calls talker (stage 0) then forwards codec tokens
 to code2wav (stage 1) to produce audio.
 
-Start the servers first (see docs/features/standalone_disaggregation.md):
+Start the servers first (see docs/user_guide/standalone_disaggregation.md):
     CUDA_VISIBLE_DEVICES=0 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni --standalone --stage-id 0 --port 8000
     CUDA_VISIBLE_DEVICES=1 vllm serve Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice --omni --standalone --stage-id 1 --port 8001
 
