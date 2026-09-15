@@ -1083,7 +1083,11 @@ async def run_standalone(args: TrackingNamespace) -> None:
     args.async_chunk = False
     args._standalone_stage_configs = standalone_configs
     args._standalone = True
-    args.explicit_keys = (args.explicit_keys | {"_standalone_stage_configs", "_standalone", "async_chunk"}) - {
+    standalone_keys = {"_standalone_stage_configs", "_standalone", "async_chunk"}
+    if resolved.config_path is not None:
+        args.deploy_config = resolved.config_path
+        standalone_keys.add("deploy_config")
+    args.explicit_keys = (args.explicit_keys | standalone_keys) - {
         "stage_id",
         "standalone",
     }
