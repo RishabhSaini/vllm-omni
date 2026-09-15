@@ -122,6 +122,13 @@ async def run_entry_speech(
             "voice acquires reference conditioning that requires the co-located "
             "payload contract. Use co-located mode for this voice."
         )
+    x_vec_only = (tts_params.get("x_vector_only_mode") or [True])[0]
+    if not x_vec_only:
+        raise ValueError(
+            "ICL conditioning is not supported in standalone mode. The resolved "
+            "voice uses in-context learning that requires the co-located payload "
+            "contract. Use co-located mode for this voice."
+        )
 
     final_output = None
     try:

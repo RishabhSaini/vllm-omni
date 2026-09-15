@@ -1044,11 +1044,8 @@ class OmniServeCommand(CLISubcommand):
 
 async def run_standalone(args: TrackingNamespace) -> None:
     """Run a single stage as a standalone HTTP server."""
-    from vllm_omni.entrypoints.utils import (
-        extract_standalone_stage_config,
-        load_and_resolve_stage_configs,
-        parse_stage_overrides,
-    )
+    from vllm_omni.config.resolver import resolve_omni_config
+    from vllm_omni.entrypoints.utils import extract_standalone_stage_config
 
     model = args.model
     stage_id: int = args.stage_id
@@ -1063,16 +1060,19 @@ async def run_standalone(args: TrackingNamespace) -> None:
         )
 
     args_dict = args.get_explicit_kwargs_dict()
-    stage_overrides = parse_stage_overrides(args_dict.get("stage_overrides"))
+    deploy_config_path = args_dict.pop("deploy_config", None)
+    strategy_config_path = args_dict.pop("strategy_config", None)
+    stage_overrides = args_dict.pop("stage_overrides", None)
 
-    config_path, stage_configs, _ = load_and_resolve_stage_configs(
+    resolved = resolve_omni_config(
         model,
-        dict(args_dict),
-        trust_remote_code=args.trust_remote_code,
-        deploy_config_path=args_dict.get("deploy_config"),
+        trust_remote_code=getattr(args, "trust_remote_code", None) or None,
+        cli_overrides=args_dict,
+        deploy_config_path=deploy_config_path,
         stage_overrides=stage_overrides,
-        strategy_config_path=args_dict.get("strategy_config"),
+        strategy_config_path=strategy_config_path,
     )
+    stage_configs = list(resolved.stage_configs)
 
     standalone_configs = extract_standalone_stage_config(stage_configs, stage_id)
 

@@ -95,9 +95,9 @@ are orchestrator-coupled, standalone stages are orchestrator-independent.
 
 ## Limitations
 
-Voice cloning is not supported. Requests with explicit `ref_audio` and
-uploaded voices are rejected. Precomputed ICL profiles are not rejected but
-may produce incorrect audio. Use co-located mode for voice cloning.
+Voice cloning is not supported. Requests with explicit `ref_audio`, uploaded
+voices, and precomputed ICL profiles are all rejected. Use co-located mode
+for voice cloning.
 
 Async-chunk streaming is not supported (full-payload transfer only). This means
 higher time-to-first-audio compared to co-located mode.
