@@ -4,13 +4,20 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
-from vllm_omni.entrypoints.openai.serving_speech import _ensure_cache_salt
-from vllm_omni.entrypoints.openai.tts_adapters.base import ARTTSAdapter
+from vllm_omni.entrypoints.openai.serving_speech import (
+    OmniOpenAIServingSpeech,
+    _ensure_cache_salt,
+)
+from vllm_omni.entrypoints.openai.tts_adapters.base import (
+    ARTTSAdapter,
+    PreparedRequest,
+)
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
@@ -61,3 +68,41 @@ def test_non_ar_backend_skipped() -> None:
     prompt: dict = {}
     _ensure_cache_salt(adapter, _request(), prompt, {})
     assert "cache_salt" not in prompt
+
+
+class _UnsaltedAdapter(ARTTSAdapter):
+    """AR adapter that builds a prompt without a salt, like the unsalted family."""
+
+    def __init__(self) -> None:
+        self.seen_prompt: dict = {}
+
+    def validate(self, request):
+        return None
+
+    async def build(self, request, sampling_params_list, has_inline_ref_audio):
+        self.seen_prompt = {"prompt_token_ids": [1, 2, 3]}
+        return PreparedRequest(prompt=self.seen_prompt, tts_params={})
+
+    def apply_sampling_overrides(self, sampling_params_list, request, prompt=None, request_id=None):
+        return sampling_params_list
+
+
+async def test_prepare_speech_generation_salts_unsalted_adapter_prompt() -> None:
+    """The serving flow wires the default salt in: prove it on the prompt dict
+    the fake adapter built, as observed after _prepare returns."""
+    engine = MagicMock()
+    engine.errored = False
+    engine.default_sampling_params_list = [{}]
+    server = OmniOpenAIServingSpeech(
+        engine_client=engine,
+        models=MagicMock(),
+        request_logger=MagicMock(),
+    )
+    server.model_config = SimpleNamespace(async_chunk=True)
+    server._tts_model_type = "unsalted-test"
+    fake = _UnsaltedAdapter()
+    server._get_tts_adapter = lambda: fake  # noqa: E731
+
+    await server._prepare_speech_generation(_request())
+
+    assert isinstance(fake.seen_prompt.get("cache_salt"), str) and fake.seen_prompt["cache_salt"]
