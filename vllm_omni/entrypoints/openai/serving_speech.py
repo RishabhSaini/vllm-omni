@@ -66,6 +66,7 @@ from vllm_omni.entrypoints.openai.tts_adapters import (
     resolve_adapter,
     tts_entry_stage_archs,
 )
+from vllm_omni.entrypoints.openai.tts_adapters.base import conditioning_cache_salt
 from vllm_omni.entrypoints.utils import coerce_param_message_types
 from vllm_omni.metrics.modality import observe_audio_first_packet, observe_audio_streaming_finalize
 from vllm_omni.outputs import OmniRequestOutput
@@ -228,6 +229,14 @@ class _SpeechStreamingResponse(StreamingResponse):
             # Close it explicitly, even inside Starlette's cancelled scope.
             with anyio.CancelScope(shield=True):
                 await cast(Any, self.body_iterator).aclose()
+
+
+def _ensure_cache_salt(adapter, request, prompt: dict, tts_params: dict | None) -> None:
+    # Default KV prefix-cache salt for AR adapters that do not set their own.
+    # Talker prompts are placeholder token IDs, so without a salt every
+    # request collides. Explicit salts win; diffusion pipelines never see this.
+    if getattr(adapter, "backend", None) == "ar" and "cache_salt" not in prompt:
+        prompt["cache_salt"] = conditioning_cache_salt(request, tts_params)
 
 
 class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
@@ -2009,6 +2018,7 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             model_type = prepared.model_type
             qwen3_ref_audio_warmup_artifact_key = prepared.warmup_artifact_key
             output_policy = prepared.output_policy
+            _ensure_cache_salt(adapter, request, prompt, tts_params)
         else:
             # Qwen omni models (Qwen3-Omni, Qwen2.5-Omni) use a "talker"
             # stage whose preprocess requires chat-templated tokens.  The
