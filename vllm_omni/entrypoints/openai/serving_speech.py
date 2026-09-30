@@ -232,11 +232,14 @@ class _SpeechStreamingResponse(StreamingResponse):
 
 
 def _ensure_cache_salt(adapter, request, prompt: dict, tts_params: dict | None) -> None:
-    # Default KV prefix-cache salt for AR adapters that do not set their own.
-    # Talker prompts are placeholder token IDs, so without a salt every
-    # request collides. Explicit salts win; diffusion pipelines never see this.
-    if isinstance(adapter, ARTTSAdapter) and "cache_salt" not in prompt:
-        prompt["cache_salt"] = conditioning_cache_salt(request, tts_params)
+    # KV prefix-cache salt precedence: adapter-computed bit wins, then a
+    # caller-supplied salt, then the derived default. Talker prompts are
+    # placeholder token IDs, so an unsalted request collides with every
+    # other; diffusion pipelines never reach here.
+    if not isinstance(adapter, ARTTSAdapter) or "cache_salt" in prompt:
+        return
+    client_salt = request.cache_salt
+    prompt["cache_salt"] = client_salt if client_salt else conditioning_cache_salt(request, tts_params)
 
 
 class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
