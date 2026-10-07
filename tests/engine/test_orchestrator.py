@@ -22,7 +22,7 @@ from vllm.v1.engine import EngineCoreOutput, EngineCoreOutputs, EngineCoreReques
 from vllm.v1.engine.exceptions import EngineDeadError
 from vllm.v1.metrics.stats import IterationStats
 
-from vllm_omni.engine import OmniEngineCoreOutput
+from vllm_omni.engine import OmniEngineCoreOutput, OmniEngineCoreOutputs
 from vllm_omni.engine.errors import NativeKVHandoffError
 from vllm_omni.engine.messages import (
     AbortRequestMessage,
@@ -197,6 +197,9 @@ class FakeStageClient:
             return None
         return dict(self._kv_sender_info)
 
+    def get_payload_sender_info(self) -> dict[str, Any] | None:
+        return None
+
     def check_health(self) -> None:
         return None
 
@@ -323,8 +326,8 @@ def _sampling_params(max_tokens: int = 4) -> SamplingParams:
     return SamplingParams(max_tokens=max_tokens)
 
 
-def _engine_core_outputs(tag: str, timestamp: float) -> SimpleNamespace:
-    return SimpleNamespace(outputs=[tag], timestamp=timestamp, scheduler_stats=None, finished_requests=None)
+def _engine_core_outputs(tag: str, timestamp: float) -> OmniEngineCoreOutputs:
+    return OmniEngineCoreOutputs(outputs=[OmniEngineCoreOutput(request_id=tag, new_token_ids=[])], timestamp=timestamp)
 
 
 def _terminal_engine_core_outputs(request_id: str, timestamp: float = 1.0) -> EngineCoreOutputs:
@@ -2366,7 +2369,7 @@ async def test_stage_pool_preserves_none_iteration_stats() -> None:
         output_processor=processor,
         stage_vllm_config=SimpleNamespace(model_config=SimpleNamespace(max_model_len=64)),
     )
-    raw_outputs = SimpleNamespace(outputs=["raw"], timestamp=1.0, scheduler_stats=None)
+    raw_outputs = _engine_core_outputs("raw", timestamp=1.0)
 
     await pool.process_llm_raw_outputs(0, raw_outputs, iteration_stats=None)
 
@@ -2383,7 +2386,7 @@ async def test_stage_pool_process_llm_raw_outputs_mutates_iteration_stats() -> N
         output_processor=processor,
         stage_vllm_config=SimpleNamespace(model_config=SimpleNamespace(max_model_len=64)),
     )
-    raw_outputs = SimpleNamespace(outputs=["raw"], timestamp=1.0, scheduler_stats=None)
+    raw_outputs = _engine_core_outputs("raw", timestamp=1.0)
     iteration_stats = IterationStats()
 
     await pool.process_llm_raw_outputs(0, raw_outputs, iteration_stats=iteration_stats)
