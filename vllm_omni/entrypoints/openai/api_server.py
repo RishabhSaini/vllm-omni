@@ -723,6 +723,7 @@ async def _init_duplex_app_state(
         "openai_streaming_video_output",
         "openai_serving_realtime_robot",
         "anthropic_serving_messages",
+        "run_serving",
     ):
         setattr(state, attribute, None)
     state.openai_serving_duplex = OmniDuplexSessionHandler(duplex_omni=engine_client)
@@ -1879,7 +1880,9 @@ async def _reject_multi_api_duplex(websocket: WebSocket) -> bool:
 @load_aware_call
 async def run_stage(request: RunRequest, raw_request: Request):
     """Run one pipeline stage and return its encoded result; see `ServingRun`."""
-    serving: ServingRun = raw_request.app.state.run_serving
+    serving: ServingRun | None = raw_request.app.state.run_serving
+    if serving is None:
+        return _unsupported_api_response(raw_request, "Run API")
     request_id = f"run-{random_uuid()}"
     raw_request.state.request_metadata = RequestResponseMetadata(request_id=request_id)
     try:
