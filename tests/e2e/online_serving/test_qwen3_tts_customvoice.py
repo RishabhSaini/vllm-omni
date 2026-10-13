@@ -14,6 +14,7 @@ os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 import io
 import json
 
+import msgspec
 import pytest
 import requests
 import soundfile as sf
@@ -30,8 +31,9 @@ from tests.helpers.stage_config import (
     get_deploy_config_stage,
     modify_stage_config,
 )
+from vllm_omni.engine.orchestrator import _RUN_STAGE_ASYNC_CHUNK_ERROR
 from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
-from vllm_omni.entrypoints.openai.serving_run import decode_output
+from vllm_omni.entrypoints.openai.serving_run import decode_output, decode_stage_input, encode_payload
 from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
 from vllm_omni.entrypoints.openai.tts_adapters.base import conditioning_cache_salt
 from vllm_omni.model_executor.models.qwen3_tts.prompt_embeds_builder import Qwen3TTSPromptEmbedsBuilder
@@ -80,6 +82,13 @@ tts_server_params = [
             server_args=["--trust-remote-code"],
         ),
         id="async_chunk",
+    )
+]
+
+# /v1/run rejects async_chunk, so run requests need a server without it.
+run_server_params = [
+    OmniServerParams(
+        model=MODEL, stage_config_path=_STAGE_CONFIG, server_args=["--trust-remote-code", "--no-async-chunk"]
     )
 ]
 
@@ -249,16 +258,7 @@ def _output_to_wav(output: str) -> bytes:
 @pytest.mark.advanced_model
 @pytest.mark.tts
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.parametrize(
-    "omni_server",
-    # /v1/run rejects async_chunk, so we need to run this test without it.
-    [
-        OmniServerParams(
-            model=MODEL, stage_config_path=_STAGE_CONFIG, server_args=["--trust-remote-code", "--no-async-chunk"]
-        )
-    ],
-    indirect=True,
-)
+@pytest.mark.parametrize("omni_server", run_server_params, indirect=True)
 def test_run_stage_chain_returns_speech(omni_server, run_level: str) -> None:
     """Ensure calling /v1/run once per stage, posting each response as the next request, returns the speech."""
     request_config = {"input": get_prompt(), "voice": "vivian", "response_format": "wav"}
@@ -275,3 +275,51 @@ def test_run_stage_chain_returns_speech(omni_server, run_level: str) -> None:
     final.raise_for_status()
     response = OmniResponse(success=True, audio_bytes=_output_to_wav(final.json()["output"]), audio_format="audio/wav")
     assert_audio_speech_response(response, request_config, run_level)
+
+
+@pytest.mark.core_model
+@pytest.mark.tts
+@hardware_test(res={"cuda": "L4"}, num_cards=1)
+@pytest.mark.parametrize("omni_server", tts_server_params, indirect=True)
+def test_run_rejects_async_chunk_server(omni_server) -> None:
+    """Ensure /v1/run fails the request with a client error when the server runs with async chunking."""
+    url = f"http://{omni_server.host}:{omni_server.port}/v1/run"
+
+    response = requests.post(url, json={"stage_input": _stage0_input(get_prompt(), "vivian")}, timeout=60)
+
+    assert response.status_code == 400
+    assert _RUN_STAGE_ASYNC_CHUNK_ERROR in response.text
+
+
+@pytest.mark.core_model
+@pytest.mark.tts
+@hardware_test(res={"cuda": "L4"}, num_cards=1)
+@pytest.mark.parametrize("omni_server", run_server_params, indirect=True)
+@pytest.mark.parametrize(
+    "edit",
+    [{"final_stage_id": 2}, {"submit_kwargs": {"unknown": True}}],
+    ids=["final-stage-past-pipeline", "unknown-submit-kwarg"],
+)
+def test_run_rejects_edited_stage_input_and_keeps_serving(omni_server, edit: dict[str, object]) -> None:
+    """Ensure a client-edited stage_input fails only that request, and the server keeps serving /v1/run."""
+    url = f"http://{omni_server.host}:{omni_server.port}/v1/run"
+    first = requests.post(
+        url,
+        json={
+            "stage_input": _stage0_input(get_prompt(), "vivian"),
+            "sampling_params": [{"max_tokens": _DUMMY_WEIGHTS_MAX_NEW_TOKENS}],
+        },
+        timeout=300,
+    )
+    first.raise_for_status()
+    # Both Qwen3-TTS stages (talker, code2wav) are LLM stages.
+    stage_input = decode_stage_input(first.json()["stage_input"], ["llm", "llm"])
+
+    edited = requests.post(
+        url,
+        json={"stage_id": 1, "stage_input": encode_payload(msgspec.structs.replace(stage_input, **edit))},
+        timeout=60,
+    )
+
+    assert edited.status_code == 400
+    requests.post(url, json=first.json(), timeout=300).raise_for_status()
