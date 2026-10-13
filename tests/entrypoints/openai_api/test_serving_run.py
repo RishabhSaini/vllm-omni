@@ -38,6 +38,7 @@ def _next_stage_input(requests: list[EngineCoreRequest] | None = None) -> NextSt
         requests=requests or [],
         submit_kwargs=None,
         stage_output=None,
+        prompt=_PROMPT,
         sampling_params_list=[SamplingParams(), SamplingParams()],
         final_stage_id=1,
         final_output_stage_ids=[1],

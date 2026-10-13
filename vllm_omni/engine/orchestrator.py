@@ -2778,6 +2778,7 @@ class OrchestratorBase:
                 requests=requests,
                 submit_kwargs=submit_kwargs,
                 stage_output=req_state.yield_stage_output,
+                prompt=req_state.prompt,
                 sampling_params_list=sampling_params_list,
                 final_stage_id=req_state.final_stage_id,
                 final_output_stage_ids=list(req_state.final_output_stage_ids),
@@ -3143,6 +3144,7 @@ class Orchestrator(OrchestratorBase):
         yield_stage_id = receiver_stage_id if receiver_stage_id < msg.final_stage_id else None
         req_state = OrchestratorRequestState(
             request_id=req_id,
+            prompt=msg.prompt,
             sampling_params_list=msg.sampling_params_list,
             final_stage_id=msg.final_stage_id,
             final_output_stage_ids=set(msg.final_output_stage_ids),

@@ -917,6 +917,7 @@ async def test_run_requests_rejected_with_async_chunk(orchestrator_factory) -> N
                 requests=[],
                 submit_kwargs=None,
                 stage_output=None,
+                prompt={"prompt": "hello"},
                 sampling_params_list=[_sampling_params(), _sampling_params()],
                 final_stage_id=1,
                 final_output_stage_ids=[1],

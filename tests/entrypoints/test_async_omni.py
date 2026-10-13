@@ -839,6 +839,7 @@ def _next_stage_input(request_id: str) -> NextStageInputMessage:
         requests=[],
         submit_kwargs=None,
         stage_output=None,
+        prompt={"prompt": "hi"},
         sampling_params_list=[],
         final_stage_id=1,
         final_output_stage_ids=[1],
