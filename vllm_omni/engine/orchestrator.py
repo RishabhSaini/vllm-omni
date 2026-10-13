@@ -3141,6 +3141,7 @@ class Orchestrator(OrchestratorBase):
             final_stage_id=msg.final_stage_id,
             final_output_stage_ids=set(msg.final_output_stage_ids),
             yield_stage_id=yield_stage_id,
+            yield_stage_output=msg.stage_output,
             request_timestamp=_time.time(),
         )
         self.request_states[req_id] = req_state
