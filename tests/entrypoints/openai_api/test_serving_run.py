@@ -6,12 +6,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import msgspec
 import pytest
 import torch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from vllm.outputs import CompletionOutput, RequestOutput
-from vllm.sampling_params import RequestOutputKind, SamplingParams
+from vllm.sampling_params import RequestOutputKind, SamplingParams, StructuredOutputsParams
 from vllm.v1.engine import EngineCoreRequest
 
 from vllm_omni.engine.messages import NextStageInputMessage, OutputMessage
@@ -21,6 +22,8 @@ from vllm_omni.entrypoints.openai import api_server
 from vllm_omni.entrypoints.openai.protocol.run import RunRequest
 from vllm_omni.entrypoints.openai.serving_run import ServingRun, decode_output, decode_stage_input, encode_payload
 from vllm_omni.errors import OmniClientError
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams
+from vllm_omni.lora.request import LoRARequest
 
 pytestmark = [pytest.mark.core_model, pytest.mark.cpu]
 
@@ -35,7 +38,7 @@ def _next_stage_input(requests: list[EngineCoreRequest] | None = None) -> NextSt
         requests=requests or [],
         submit_kwargs=None,
         stage_output=None,
-        sampling_params_list=[],
+        sampling_params_list=[SamplingParams(), SamplingParams()],
         final_stage_id=1,
         final_output_stage_ids=[1],
     )
@@ -65,6 +68,21 @@ def test_stage_input_round_trips_llm_receiver():
     request.additional_information = serialize_additional_information({"codes": torch.arange(2)})
     stage_input = _next_stage_input([request])
     assert decode_stage_input(encode_payload(stage_input), ("llm", "llm")) == stage_input
+
+
+def test_stage_input_round_trips_sampling_params():
+    """Ensure a stage's sampling params (including complex types) survive encoding."""
+    stage_input = msgspec.structs.replace(
+        _next_stage_input(),
+        sampling_params_list=[
+            SamplingParams(structured_outputs=StructuredOutputsParams(json={"type": "object"})),
+            OmniDiffusionSamplingParams(
+                lora_request=LoRARequest(lora_name="adapter", lora_int_id=1, lora_path="/adapter"),
+            ),
+        ],
+    )
+    decoded = decode_stage_input(encode_payload(stage_input), ("llm", "diffusion"))
+    assert decoded.sampling_params_list == stage_input.sampling_params_list
 
 
 @pytest.mark.asyncio
@@ -126,6 +144,16 @@ async def test_downstream_stage_call_rejects_stage_input_built_for_another_stage
     engine_client = _engine_client()
     stage_input = _next_stage_input()
     request = RunRequest(stage_id=stage_input.receiver_stage_id + 1, stage_input=encode_payload(stage_input))
+    with pytest.raises(OmniClientError):
+        await ServingRun(engine_client).run(request, request_id="run-bad")
+    engine_client.run_downstream_stage.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_downstream_stage_call_rejects_sampling_params():
+    """Ensure a downstream call can't set sampling params, since its stage_input already carries them."""
+    engine_client = _engine_client()
+    request = RunRequest(stage_id=1, stage_input=encode_payload(_next_stage_input()), sampling_params=[{}])
     with pytest.raises(OmniClientError):
         await ServingRun(engine_client).run(request, request_id="run-bad")
     engine_client.run_downstream_stage.assert_not_awaited()

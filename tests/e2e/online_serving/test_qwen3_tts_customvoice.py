@@ -31,7 +31,6 @@ from tests.helpers.stage_config import (
     get_deploy_config_stage,
     modify_stage_config,
 )
-from vllm_omni.engine.orchestrator import _RUN_STAGE_ASYNC_CHUNK_ERROR
 from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
 from vllm_omni.entrypoints.openai.serving_run import decode_output, decode_stage_input, encode_payload
 from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
@@ -280,20 +279,6 @@ def test_run_stage_chain_returns_speech(omni_server, run_level: str) -> None:
 @pytest.mark.core_model
 @pytest.mark.tts
 @hardware_test(res={"cuda": "L4"}, num_cards=1)
-@pytest.mark.parametrize("omni_server", tts_server_params, indirect=True)
-def test_run_rejects_async_chunk_server(omni_server) -> None:
-    """Ensure /v1/run fails the request with a client error when the server runs with async chunking."""
-    url = f"http://{omni_server.host}:{omni_server.port}/v1/run"
-
-    response = requests.post(url, json={"stage_input": _stage0_input(get_prompt(), "vivian")}, timeout=60)
-
-    assert response.status_code == 400
-    assert _RUN_STAGE_ASYNC_CHUNK_ERROR in response.text
-
-
-@pytest.mark.core_model
-@pytest.mark.tts
-@hardware_test(res={"cuda": "L4"}, num_cards=1)
 @pytest.mark.parametrize("omni_server", run_server_params, indirect=True)
 @pytest.mark.parametrize(
     "edit",
@@ -312,8 +297,9 @@ def test_run_rejects_edited_stage_input_and_keeps_serving(omni_server, edit: dic
         timeout=300,
     )
     first.raise_for_status()
+    next_request = first.json()
     # Both Qwen3-TTS stages (talker, code2wav) are LLM stages.
-    stage_input = decode_stage_input(first.json()["stage_input"], ["llm", "llm"])
+    stage_input = decode_stage_input(next_request["stage_input"], ["llm", "llm"])
 
     edited = requests.post(
         url,
@@ -322,4 +308,4 @@ def test_run_rejects_edited_stage_input_and_keeps_serving(omni_server, edit: dic
     )
 
     assert edited.status_code == 400
-    requests.post(url, json=first.json(), timeout=300).raise_for_status()
+    requests.post(url, json=next_request, timeout=300).raise_for_status()

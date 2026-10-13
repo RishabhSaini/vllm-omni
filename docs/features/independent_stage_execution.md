@@ -51,7 +51,7 @@ You should see both stage 0 and stage 1 register as replicas with the `OmniMaste
 
 In the preliminary implementation, there is no preprocessing or postprocessing done on the request and response objects, so you need to build the stage 0 inputs and unpack the final response directly.
 
-After the first inference call, we can pipe the output directly back into `/v1/run` to run the second stage. Currently, the output is encoded since it is the raw yielded payload, so we provide a helper to unpack the raw message. You can see the full flow below.
+After the first inference call, we can pipe the output directly back into `/v1/run` to run the second stage. Currently, the output is encoded since it is the raw yielded payload, so we provide a helper to unpack the raw message. Sampling params currently must be be set on the stage 0 call and are rejected on direct calls to downstream stages. You can see the full flow below.
 
 ```python
 import argparse

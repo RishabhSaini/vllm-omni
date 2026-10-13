@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import msgspec
 import pybase64 as base64
 from vllm.outputs import RequestOutput
+from vllm.sampling_params import SamplingParams
 
 from vllm_omni.distributed.omni_connectors.utils.serialization import OmniMsgpackDecoder, OmniMsgpackEncoder
 from vllm_omni.engine import OmniEngineCoreRequest
@@ -18,7 +20,7 @@ from vllm_omni.entrypoints.openai.stage_params import to_sampling_params_list
 from vllm_omni.entrypoints.openai.utils import get_stage_type
 from vllm_omni.entrypoints.utils import coerce_param_message_types
 from vllm_omni.errors import OmniClientError
-from vllm_omni.inputs.data import OmniSamplingParams
+from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
 
 
 def is_diffusion(stage_type: str) -> bool:
@@ -33,12 +35,22 @@ def encode_payload(payload: NextStageInputMessage | RequestOutput) -> str:
 def decode_stage_input(data: str, stage_types: Sequence[str]) -> NextStageInputMessage:
     """Decode a next stage input encoded by `encode_payload`.
 
-    The codec returns structs as plain containers, which we rebuild based on stage type.
+    The codec returns structs and dataclasses as plain containers, which we rebuild based on stage type.
     """
     fields = OmniMsgpackDecoder().decode(base64.b64decode(data))
     if not is_diffusion(stage_types[fields["receiver_stage_id"]]):
         fields["requests"] = [msgspec.convert(request, OmniEngineCoreRequest) for request in fields["requests"]]
+    fields["sampling_params_list"] = [
+        _decode_sampling_params(params, stage_type)
+        for params, stage_type in zip(fields["sampling_params_list"], stage_types, strict=True)
+    ]
     return NextStageInputMessage(**fields)
+
+
+def _decode_sampling_params(params: dict[str, Any], stage_type: str) -> OmniSamplingParams:
+    if is_diffusion(stage_type):
+        return OmniDiffusionSamplingParams.from_dict(params)
+    return msgspec.convert(params, SamplingParams)
 
 
 def decode_output(data: str) -> RequestOutput:
@@ -60,37 +72,37 @@ class ServingRun:
 
     async def run(self, request: RunRequest, *, request_id: str) -> RunResponse:
         """Run the stage named by `request.stage_id` and return its encoded result."""
-        sampling_params_list = coerce_param_message_types(
-            to_sampling_params_list(self.engine_client, request.sampling_params or []), is_streaming=False
-        )
         if request.stage_id == 0:
-            response = await self._run_entry_stage(request, sampling_params_list, request_id=request_id)
+            response = await self._run_entry_stage(request, request_id=request_id)
         else:
-            response = await self._run_downstream_stage(request, sampling_params_list, request_id=request_id)
+            response = await self._run_downstream_stage(request, request_id=request_id)
         return self._build_stage_response(response)
 
-    async def _run_entry_stage(
-        self, request: RunRequest, sampling_params_list: list[OmniSamplingParams], *, request_id: str
-    ) -> NextStageInputMessage | OutputMessage:
+    async def _run_entry_stage(self, request: RunRequest, *, request_id: str) -> NextStageInputMessage | OutputMessage:
         """Run stage 0 on the prompt in request.stage_input."""
         if not isinstance(request.stage_input, dict):
             raise OmniClientError("Stage 0 takes a prompt dict as stage_input")
+        sampling_params_list = coerce_param_message_types(
+            to_sampling_params_list(self.engine_client, request.sampling_params or []), is_streaming=False
+        )
         return await self.engine_client.run_entry_stage(
             request.stage_input, sampling_params_list, request_id=request_id
         )
 
     async def _run_downstream_stage(
-        self, request: RunRequest, sampling_params_list: list[OmniSamplingParams], *, request_id: str
+        self, request: RunRequest, *, request_id: str
     ) -> NextStageInputMessage | OutputMessage:
         """Run the stage that request.stage_input was built for, once it matches request.stage_id."""
         if not isinstance(request.stage_input, str):
             raise OmniClientError(f"Stage {request.stage_id} takes the stage_input returned by the previous call")
+        if request.sampling_params is not None:
+            raise OmniClientError("Only the stage 0 call takes sampling_params; later calls carry them in stage_input")
         stage_input = decode_stage_input(request.stage_input, self.stage_types)
         if stage_input.receiver_stage_id != request.stage_id:
             raise OmniClientError(
                 f"stage_input is for stage {stage_input.receiver_stage_id}, not stage {request.stage_id}"
             )
-        return await self.engine_client.run_downstream_stage(stage_input, sampling_params_list, request_id=request_id)
+        return await self.engine_client.run_downstream_stage(stage_input, request_id=request_id)
 
     @staticmethod
     def _build_stage_response(response: NextStageInputMessage | OutputMessage) -> RunResponse:

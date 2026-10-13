@@ -13,6 +13,7 @@ class RunRequest(BaseModel):
 
     stage_id: int = 0
     stage_input: dict[str, Any] | str
+    # Per-stage params (stage 0 only). Later calls carry the sampling params in stage_input.
     sampling_params: list[dict[str, Any]] | None = None
 
 

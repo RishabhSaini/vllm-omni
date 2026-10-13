@@ -2727,6 +2727,7 @@ class OrchestratorBase:
                 source_stage_id=source_stage_id,
                 receiver_stage_id=receiver_stage_id,
                 submit_kwargs=submit_kwargs,
+                params_override=params_override,
             )
             return
         to_pool = self.stage_pools[receiver_stage_id]
@@ -2760,8 +2761,14 @@ class OrchestratorBase:
         source_stage_id: int,
         receiver_stage_id: int,
         submit_kwargs: dict[str, Any] | None,
+        params_override: OmniSamplingParams | None,
     ) -> None:
         """End a request at its yielded stage and return the next stage's input to the caller."""
+        sampling_params_list = list(req_state.sampling_params_list)
+        if params_override is not None:
+            # Param overrides are needed in cases like diffusion, where request-specific values like CFG companion
+            # ids have been folded into the params. This is important since run requests are stateless between stages
+            sampling_params_list[receiver_stage_id] = params_override
         await self._cleanup_request_ids([req_id])
         await self.output_async_queue.put(
             NextStageInputMessage(
@@ -2771,8 +2778,7 @@ class OrchestratorBase:
                 requests=requests,
                 submit_kwargs=submit_kwargs,
                 stage_output=req_state.yield_stage_output,
-                # The caller sends the sampling params on every call.
-                sampling_params_list=[],
+                sampling_params_list=sampling_params_list,
                 final_stage_id=req_state.final_stage_id,
                 final_output_stage_ids=list(req_state.final_output_stage_ids),
             )
