@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from dataclasses import fields, is_dataclass
 from typing import Any
 
@@ -86,8 +87,19 @@ def build_stage_sampling_params_list(
     return sampling_params_list
 
 
-def to_sampling_params_list(engine_client: Any, sampling_params_list: list[dict]) -> list[Any]:
+def to_sampling_params_list(
+    engine_client: Any,
+    sampling_params_list: list[dict],
+    *,
+    request_overrides: dict[str, Any] | None = None,
+    merge_llm_defaults: bool = True,
+) -> list[Any]:
     """Convert request dicts to stage-typed sampling params objects.
+
+    Partial LLM dictionaries inherit deploy defaults, then ``request_overrides``
+    (explicit top-level request parameters) on the comprehension stage. Explicit stage fields win.
+    Video sessions set ``merge_llm_defaults=False`` so provided stage dicts
+    use constructor defaults instead, preserving their replacement semantics.
 
     For diffusion stages, build ``OmniDiffusionSamplingParams`` so
     downstream ``StageDiffusionClient._sampling_params_to_dict`` (which
@@ -100,10 +112,17 @@ def to_sampling_params_list(engine_client: Any, sampling_params_list: list[dict]
     default_params_list = list(getattr(engine_client, "default_sampling_params_list", []) or [])
     final_sampling_params_list: list[Any] = []
     for idx, sampling_params in enumerate(sampling_params_list):
-        stage_type = get_stage_type(stage_configs[idx]) if idx < len(stage_configs) else "llm"
+        stage_config = stage_configs[idx] if idx < len(stage_configs) else None
+        stage_type = get_stage_type(stage_config)
         target_cls = OmniDiffusionSamplingParams if stage_type == "diffusion" else SamplingParams
         if isinstance(sampling_params, dict):
-            final_sampling_params_list.append(target_cls(**sampling_params))
+            if target_cls is SamplingParams and merge_llm_defaults:
+                default = default_params_list[idx] if idx < len(default_params_list) else SamplingParams()
+                final_sampling_params_list.append(
+                    merge_llm_sampling_params(default, stage_config, sampling_params, request_overrides)
+                )
+            else:
+                final_sampling_params_list.append(target_cls(**sampling_params))
         elif isinstance(sampling_params, target_cls):
             final_sampling_params_list.append(sampling_params)
         elif isinstance(sampling_params, SamplingParams | OmniDiffusionSamplingParams):
@@ -118,8 +137,59 @@ def to_sampling_params_list(engine_client: Any, sampling_params_list: list[dict]
         else:
             raise ValueError(f"Invalid sampling params: {sampling_params}")
     for idx in range(len(final_sampling_params_list), len(stage_configs)):
-        if idx < len(default_params_list):
+        stage_config = stage_configs[idx]
+        is_comprehension = (
+            stage_config.get("is_comprehension", False)
+            if isinstance(stage_config, Mapping)
+            else getattr(stage_config, "is_comprehension", False)
+        )
+        if request_overrides is not None and is_comprehension and get_stage_type(stage_config) != "diffusion":
+            default = default_params_list[idx] if idx < len(default_params_list) else SamplingParams()
+            final_sampling_params_list.append(merge_llm_sampling_params(default, stage_config, {}, request_overrides))
+        elif idx < len(default_params_list):
             final_sampling_params_list.append(clone_sampling_params(default_params_list[idx]))
         else:
             final_sampling_params_list.append(SamplingParams())
     return final_sampling_params_list
+
+
+def merge_llm_sampling_params(
+    default_params: SamplingParams | dict[str, Any],
+    stage_config: Any,
+    overrides: dict[str, Any],
+    request_overrides: dict[str, Any] | None,
+) -> SamplingParams:
+    """Merge raw configuration before constructing normalized runtime params."""
+    model_config = getattr(stage_config, "model_config", stage_config)
+    if isinstance(model_config, Mapping):
+        raw_defaults = model_config.get("default_sampling_params", default_params)
+    else:
+        raw_defaults = getattr(model_config, "default_sampling_params", default_params)
+    if raw_defaults is None:
+        merged = {}
+    elif isinstance(raw_defaults, Mapping):
+        merged = dict(raw_defaults)
+    elif isinstance(default_params, dict):
+        merged = dict(default_params)
+    else:
+        # Compatibility for clients without raw stage configuration. Keep
+        # their runtime policies; explicit and inferred values are ambiguous.
+        merged = {
+            name: getattr(default_params, name)
+            for name in SamplingParams.__struct_fields__
+            if not name.startswith("_") and name != "output_text_buffer_length"
+        }
+    is_comprehension = (
+        stage_config.get("is_comprehension", False)
+        if isinstance(stage_config, Mapping)
+        else getattr(stage_config, "is_comprehension", False)
+    )
+    if request_overrides is not None and is_comprehension:
+        merged.update(request_overrides)
+    extra_args = merged.get("extra_args")
+    merged.update(overrides)
+    if isinstance(extra_args, dict) and isinstance(overrides.get("extra_args"), dict):
+        merged["extra_args"] = {**extra_args, **overrides["extra_args"]}
+    # Constructors derive cache/stop/greedy state from the final values.
+    # Nested dictionaries must never alias deploy defaults or request data.
+    return SamplingParams(**copy.deepcopy(merged))

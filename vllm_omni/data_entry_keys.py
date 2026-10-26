@@ -149,6 +149,7 @@ class OmniPayload(TypedDict, total=False):
     speaker: Any
     language: Any
     request_id: str
+    additional_information: dict[str, Any]
 
 
 # ── msgspec.Struct mirror of the TypedDicts (runtime-validated) ──
@@ -255,6 +256,12 @@ class MetaStruct(_StructBase):
     audio_seed: int | None = None
     token_role_ids: torch.Tensor | None = None
     minimax_h3_prepared_reference_videos: str | None = None
+    # Assistant text-token count the request's prompt has reached when this
+    # payload was produced: a running count over the request's text ids, which
+    # covers every segment a resumable request has been fed so far.  A consumer
+    # derives one segment's n_k as the increase between consecutive segment
+    # boundaries; the value itself is not segment-local.
+    request_text_tokens: int | None = None
 
 
 class OmniPayloadStruct(_StructBase):
@@ -271,6 +278,7 @@ class OmniPayloadStruct(_StructBase):
     speaker: list[str] | str | None = None
     language: list[str] | str | None = None
     request_id: str | None = None
+    additional_information: dict[str, Any] | None = None
     past_key_values: list[int] | None = None
     kv_metadata: dict[str, Any] | None = None
 

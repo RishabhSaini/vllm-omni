@@ -10,6 +10,7 @@ from vllm.v1.request import RequestStatus
 
 from vllm_omni.core.sched.omni_scheduling_coordinator import payload_for_scheduler
 from vllm_omni.data_entry_keys import payload_finished
+from vllm_omni.model_executor.models.minicpmo_4_5.handoff import pack_handoff_tensor
 from vllm_omni.model_executor.stage_input_processors.minicpmo_4_5_omni import (
     _extract_codec_delta,
     tts2code2wav_async_chunk,
@@ -239,11 +240,12 @@ def test_duplex_final_segment_preserves_every_code_and_closes_once(
     assert not duplicate.meta.last_chunk
 
 
-def test_first_chunk_forwards_reference_voice_and_duplex_identity() -> None:
+@pytest.mark.parametrize("packed", [False, True])
+def test_first_chunk_forwards_reference_voice_and_duplex_identity(packed) -> None:
     manager = _manager()
     request = _request("req")
     request.model_intermediate_buffer = {
-        "codes": {"ref": [0.1, -0.1]},
+        "codes": {"ref": pack_handoff_tensor(torch.tensor([0.1, -0.1])) if packed else [0.1, -0.1]},
         "meta": {"ref_audio_sr": 16000},
     }
     request.additional_information = {
@@ -294,11 +296,12 @@ def test_first_chunk_falls_back_to_legacy_reference_fields() -> None:
     assert payload.meta.ref_audio_sr == 16000
 
 
-def test_full_payload_forwards_all_codes_and_request_metadata() -> None:
+@pytest.mark.parametrize("packed", [False, True])
+def test_full_payload_forwards_all_codes_and_request_metadata(packed) -> None:
     manager = _manager()
     request = _request("req")
     request.model_intermediate_buffer = {
-        "codes": {"ref": [0.1, -0.1]},
+        "codes": {"ref": pack_handoff_tensor(torch.tensor([0.1, -0.1])) if packed else [0.1, -0.1]},
         "meta": {
             "ref_audio_sr": 16000,
             "native_duplex_segment_text": "hello",

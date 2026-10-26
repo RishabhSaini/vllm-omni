@@ -7,6 +7,7 @@ from typing import Literal, Protocol
 
 import msgspec
 from vllm.inputs import PromptType
+from vllm.lora.request import LoRARequest
 from vllm.v1.engine import EngineCoreRequest
 
 from vllm_omni.inputs.data import OmniInteractionPrompt, OmniPromptType, OmniSamplingParams
@@ -42,6 +43,8 @@ class StageSubmissionMessage(EngineQueueMessage, kw_only=True):
     # Stage ID to provide the output of current request for use in external routing.
     # Only set when that stage has a next stage; otherwise it's a normal request.
     yield_stage_id: int | None = None
+    entry_stage_id: int = 0
+    lora_request: LoRARequest | None = None
 
 
 class AddCompanionRequestMessage(EngineQueueMessage, kw_only=True):
@@ -99,6 +102,7 @@ class ErrorMessage(EngineQueueMessage, kw_only=True):
     error: str
     status_code: int | None = None
     error_type: str | None = None
+    mm_cache_miss_hashes: list[str] | None = None
     fatal: bool = False
     request_id: str | None = None
     stage_id: int | None = None
