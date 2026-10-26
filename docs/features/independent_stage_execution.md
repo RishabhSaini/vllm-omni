@@ -8,14 +8,14 @@ vLLM-Omni supports running stages independently, where the payload is yielded ba
 
 ## Deployment
 
-We will use Qwen3-TTS as an example for independent stage execution, illustrating how to pass the payload from one stage to the next. First, start the frontend, which also brings up the orchestrator in its own thread. For now, this can be accomplished by passing a stage-id of `-1`. Note that you must configure the Omni master server settings for remote replicas.
+We will use Qwen3-TTS as an example for independent stage execution, illustrating how to pass the payload from one stage to the next. First, start the frontend, which also brings up the orchestrator in its own thread. For now, this can be accomplished by passing a stage-id of `none`. Note that you must configure the Omni master server settings for remote replicas.
 
 ```bash
 # Starts the API server on port 8000
 vllm serve Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice \
   --trust-remote-code \
   --no-async-chunk \
-  --stage-id -1 \
+  --stage-id none \
   --omni-master-address 127.0.0.1 \
   --omni-master-port 21212 \
   --omni
