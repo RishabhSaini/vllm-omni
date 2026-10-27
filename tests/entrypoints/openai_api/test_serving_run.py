@@ -12,7 +12,7 @@ import torch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from vllm.outputs import CompletionOutput, RequestOutput
-from vllm.sampling_params import RequestOutputKind, SamplingParams, StructuredOutputsParams
+from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.v1.engine import EngineCoreRequest
 
 from vllm_omni.engine.messages import NextStageInputMessage, OutputMessage
@@ -82,15 +82,6 @@ def test_stage_input_round_trips_sampling_params():
     )
     decoded = decode_stage_input(encode_payload(stage_input), ("llm", "diffusion"))
     assert decoded.sampling_params_list == stage_input.sampling_params_list
-
-
-@pytest.mark.asyncio
-async def test_call_runs_stage_with_final_only_output_kind():
-    """Ensure a call runs its stage with FINAL_ONLY params so the final output is complete."""
-    engine_client = _engine_client()
-    await ServingRun(engine_client).run(RunRequest(stage_input=_PROMPT), request_id="run-entry")
-    sampling_params_list = engine_client.run_entry_stage.call_args.args[1]
-    assert all(params.output_kind == RequestOutputKind.FINAL_ONLY for params in sampling_params_list)
 
 
 @pytest.mark.asyncio

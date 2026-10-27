@@ -64,7 +64,7 @@ class OmniRequest(Request):
         self.additional_information: AdditionalInformationPayload | None = additional_information
         # Runner-owned runtime payload.
         self.model_intermediate_buffer: dict | None = model_intermediate_buffer
-        # Sender's connector address for this request's stage payload
+        # Sender's connector address, or the payload itself for run requests.
         self.payload_sender_info: PayloadSenderInfo | None = payload_sender_info
 
     @staticmethod

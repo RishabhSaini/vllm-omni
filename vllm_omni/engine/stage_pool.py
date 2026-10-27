@@ -587,16 +587,14 @@ class StagePool:
         # For run requests, the payload is stored directly as bytes under the request ID
         if request_id in self._stage_payloads:
             return self._stage_payloads[request_id]
-
-        # Otherwise, for LLM stages, get the stage client and fetch the payload send info
-        if self.stage_type == "llm":
-            if (sender_client := self.get_bound_client(request_id)) is None:
-                sender_client = self.stage_client
-
-            if sender_client is not None:
-                sender_client = cast(StagePoolLLMClient, sender_client)
-                return sender_client.get_payload_sender_info()
-        return None
+        if self.stage_type != "llm":
+            return None
+        sender_client = self.get_bound_client(request_id)
+        if sender_client is None:
+            sender_client = self.stage_client
+        if sender_client is None:
+            return None
+        return cast(StagePoolLLMClient, sender_client).get_payload_sender_info()
 
     def release_bindings(self, request_ids: list[str]) -> None:
         """Drop route bindings for the given request ids in this stage."""

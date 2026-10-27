@@ -885,6 +885,29 @@ def test_run_entry_stage_yields_at_entry_stage():
 
 
 @pytest.mark.cpu
+def test_run_entry_stage_submits_final_only_params():
+    """Ensure the entry stage call runs with FINAL_ONLY params, since each call returns one complete output."""
+
+    async def run():
+        omni = get_async_omni_instance()
+        omni.engine.num_stages = 2
+        submitted: dict[str, Any] = {}
+
+        async def fake_add_request_async(*, request_id, sampling_params_list, **kwargs):
+            submitted["sampling_params_list"] = sampling_params_list
+            omni.request_states[request_id].queue.put_nowait(_next_stage_input(request_id))
+
+        omni.engine.add_request_async = fake_add_request_async
+        delta_params = SamplingParams(output_kind=RequestOutputKind.DELTA)
+
+        await omni.run_entry_stage({"prompt": "hi"}, [delta_params, SamplingParams()], request_id="entry-call")
+
+        assert all(params.output_kind == RequestOutputKind.FINAL_ONLY for params in submitted["sampling_params_list"])
+
+    asyncio.run(run())
+
+
+@pytest.mark.cpu
 def test_run_downstream_stage_resubmits_and_returns_finished_output():
     """Ensure a downstream stage call resubmits under a fresh id and returns the finished output, not a partial one."""
 

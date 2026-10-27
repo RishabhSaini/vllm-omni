@@ -423,7 +423,7 @@ class OmniSchedulerMixin(_SchedulerMixinBase):
         """Drain input notifications into the coordinator on the scheduler thread."""
         connector_outputs = self._drain_omni_connector_outputs()
 
-        # Update the payload on core engine outputs on any pending run requests
+        # Attach returned payloads to held run outputs.
         awaiting = self._outputs_awaiting_stage_payload
         for output in connector_outputs:
             for req_id, stage_payload in output.stage_payloads.items():
@@ -929,7 +929,7 @@ class OmniSchedulerMixin(_SchedulerMixinBase):
                     output.outputs.append(error_output)
             pending.clear()
 
-        # Handle any pending run requests
+        # Emit held run outputs once their payload arrives.
         awaiting = self._outputs_awaiting_stage_payload
         for req_id, (client_index, held_output) in list(awaiting.items()):
             if held_output.stage_payload is not None:
@@ -1280,7 +1280,6 @@ class OmniSchedulerMixin(_SchedulerMixinBase):
         if request_ids is None:
             self._outputs_awaiting_stage_payload.clear()
         else:
-            # Otherwise, purge any explicit run request targets
             for request_id in target_request_ids:
                 if request_id in self._outputs_awaiting_stage_payload:
                     del self._outputs_awaiting_stage_payload[request_id]

@@ -37,6 +37,7 @@ from vllm_omni.engine.messages import ErrorMessage, NextStageInputMessage, Outpu
 from vllm_omni.entrypoints.async_omni_base import ABORT_TIMEOUT_S, AsyncOmniBase
 from vllm_omni.entrypoints.client_request_state import ClientRequestState
 from vllm_omni.entrypoints.omni_base import OmniEngineDeadError
+from vllm_omni.entrypoints.utils import coerce_param_message_types
 from vllm_omni.errors import client_error_metadata
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
 from vllm_omni.metrics.stats import OrchestratorAggregator as OrchestratorMetrics
@@ -704,6 +705,8 @@ class AsyncOmni(AsyncOmniBase, EngineClient):
         Returns the next stage's input, or the raw output if the entry stage is the final stage.
         """
         final_stage_id = self.num_stages - 1
+        # Each call returns one complete output, so we use FINAL_ONLY
+        sampling_params_list = coerce_param_message_types(list(sampling_params_list), is_streaming=False)
         async with self._stage_request(request_id, stage_id=0) as req_state:
             await self.engine.add_request_async(
                 request_id=req_state.request_id,

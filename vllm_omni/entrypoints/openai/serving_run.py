@@ -18,13 +18,8 @@ from vllm_omni.entrypoints.async_omni import AsyncOmni
 from vllm_omni.entrypoints.openai.protocol.run import RunRequest, RunResponse
 from vllm_omni.entrypoints.openai.stage_params import to_sampling_params_list
 from vllm_omni.entrypoints.openai.utils import get_stage_type
-from vllm_omni.entrypoints.utils import coerce_param_message_types
 from vllm_omni.errors import OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
-
-
-def is_diffusion(stage_type: str) -> bool:
-    return stage_type == "diffusion"
 
 
 def encode_payload(payload: NextStageInputMessage | RequestOutput) -> str:
@@ -39,7 +34,7 @@ def decode_stage_input(data: str, stage_types: Sequence[str]) -> NextStageInputM
     """
     stage_input = NextStageInputMessage(**OmniMsgpackDecoder().decode(base64.b64decode(data)))
     stage_input.check_stage_ids(len(stage_types))
-    if not is_diffusion(stage_types[stage_input.receiver_stage_id]):
+    if stage_types[stage_input.receiver_stage_id] != "diffusion":
         stage_input.requests = [msgspec.convert(request, OmniEngineCoreRequest) for request in stage_input.requests]
     stage_input.sampling_params_list = [
         _decode_sampling_params(params, stage_type)
@@ -49,7 +44,7 @@ def decode_stage_input(data: str, stage_types: Sequence[str]) -> NextStageInputM
 
 
 def _decode_sampling_params(params: dict[str, Any], stage_type: str) -> OmniSamplingParams:
-    if is_diffusion(stage_type):
+    if stage_type == "diffusion":
         return OmniDiffusionSamplingParams.from_dict(params)
     return msgspec.convert(params, SamplingParams)
 
@@ -83,9 +78,7 @@ class ServingRun:
         """Run stage 0 on the prompt in request.stage_input."""
         if not isinstance(request.stage_input, dict):
             raise OmniClientError("Stage 0 takes a prompt dict as stage_input")
-        sampling_params_list = coerce_param_message_types(
-            to_sampling_params_list(self.engine_client, request.sampling_params or []), is_streaming=False
-        )
+        sampling_params_list = to_sampling_params_list(self.engine_client, request.sampling_params or [])
         return await self.engine_client.run_entry_stage(
             request.stage_input, sampling_params_list, request_id=request_id
         )

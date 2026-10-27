@@ -2948,7 +2948,7 @@ class OrchestratorBase:
                     )
                 decode_inputs.append({"prompt_token_ids": list(prompt_token_ids)})
 
-            decode_requests = []
+            decode_requests: list[EngineCoreRequest] = []
             for decode_input in decode_inputs:
                 request = build_engine_core_request_from_tokens(
                     request_id=req_id,
@@ -3605,8 +3605,7 @@ class Orchestrator(OrchestratorBase):
             await asyncio.gather(consumer, shutdown, return_exceptions=True)
 
     async def _dispatch_message(self, msg: EngineQueueMessage) -> bool:
-        # Callers can modify run payloads, including the type field, so route them by class
-        # to prevent potential malicious behaviors, since doing so could kill the orchestrator
+        # Callers can edit a run payload's type field, so route it by class.
         if isinstance(msg, NextStageInputMessage):
             await self._handle_next_stage_input(msg)
             return True
@@ -3666,6 +3665,7 @@ class Orchestrator(OrchestratorBase):
         # be determinable from output modalities, e.g., thinker vs code2wav for qwen3omni
         final_stage_id = self.num_stages - 1
         yield_stage_id = receiver_stage_id if receiver_stage_id < final_stage_id else None
+        requests = cast(list[OmniEngineCoreRequest], msg.requests)
         req_state = OrchestratorRequestState(
             request_id=req_id,
             prompt=msg.prompt,
@@ -3685,7 +3685,7 @@ class Orchestrator(OrchestratorBase):
             return_stage_payload = (
                 yield_stage_id is not None and self.stage_pools[yield_stage_id + 1].takes_full_payload_input
             )
-            _update_stale_request_metadata(msg.requests, req_id, return_stage_payload=return_stage_payload)
+            _update_stale_request_metadata(requests, req_id, return_stage_payload=return_stage_payload)
         await self._dispatch_or_fail_request(
             lambda: self._submit_to_stage(
                 req_id,

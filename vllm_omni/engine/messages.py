@@ -12,6 +12,7 @@ from vllm.lora.request import LoRARequest
 from vllm.sampling_params import SamplingParams
 from vllm.v1.engine import EngineCoreRequest
 
+from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.engine.stage_client import DiffusionSubmitKwargs
 from vllm_omni.inputs.data import (
     OmniDiffusionSamplingParams,
@@ -151,7 +152,7 @@ class NextStageInputMessage(EngineQueueMessage, kw_only=True):
     def ensure_valid(self, stage_types: Sequence[str | None]) -> None:
         """Raise ValueError if this input can't be submitted to its receiver stage correctly.
 
-        Callers can modify run payloads, so we need to be careful about validation.
+        Fields come from the caller, so they may be any type.
         """
         self.check_stage_ids(len(stage_types))
         receiver_type = stage_types[self.receiver_stage_id]
@@ -176,13 +177,13 @@ class NextStageInputMessage(EngineQueueMessage, kw_only=True):
         """Raise ValueError if the requests are incompatible with the receiver type."""
         requests = self.requests
         if receiver_type == "diffusion":
-            # A diffusion stage takes one prompt per request.
+            # StagePool.submit_initial rejects list prompts.
             requests_fit = isinstance(requests, list) and len(requests) == 1 and isinstance(requests[0], (dict, str))
         else:
             requests_fit = (
                 isinstance(requests, list)
                 and len(requests) > 0
-                and all(isinstance(request, EngineCoreRequest) for request in requests)
+                and all(isinstance(request, OmniEngineCoreRequest) for request in requests)
             )
         if not requests_fit:
             raise ValueError(
