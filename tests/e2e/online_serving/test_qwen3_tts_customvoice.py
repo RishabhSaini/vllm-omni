@@ -282,8 +282,7 @@ def test_run_stage_chain_returns_speech(omni_server, run_level: str) -> None:
 @pytest.mark.parametrize("omni_server", run_server_params, indirect=True)
 @pytest.mark.parametrize(
     "edit",
-    [{"final_stage_id": 2}, {"submit_kwargs": {"unknown": True}}],
-    ids=["final-stage-past-pipeline", "unknown-submit-kwarg"],
+    [{"requests": []}, {"submit_kwargs": {"unknown": True}}],
 )
 def test_run_rejects_edited_stage_input_and_keeps_serving(omni_server, edit: dict[str, object]) -> None:
     """Ensure a client-edited stage_input fails only that request, and the server keeps serving /v1/run."""

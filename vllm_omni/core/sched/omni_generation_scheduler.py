@@ -25,7 +25,6 @@ from vllm.v1.spec_decode.metrics import SpecDecodingStats
 
 from vllm_omni.core.sched.omni_scheduler_mixin import OmniSchedulerMixin
 from vllm_omni.core.sched.output import OmniCachedRequestData, OmniNewRequestData
-from vllm_omni.data_entry_keys import payload_finished
 from vllm_omni.engine.serialization import deserialize_additional_information
 from vllm_omni.outputs import OmniModelRunnerOutput
 
@@ -204,9 +203,7 @@ class OmniGenerationScheduler(OmniSchedulerMixin, VLLMScheduler):
             for output in new_outputs:
                 ready.update(output.chunk_ready_req_ids)
                 terminal.update(output.chunk_finished_req_ids)
-                terminal.update(
-                    req_id for req_id, metadata in output.request_metadata.items() if payload_finished(metadata)
-                )
+                terminal.update(req_id for req_id, update in output.request_metadata.items() if update.input_terminal)
             runnable = {
                 req_id
                 for req_id in ready | terminal
