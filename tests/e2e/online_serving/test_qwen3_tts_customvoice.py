@@ -87,7 +87,10 @@ tts_server_params = [
 # /v1/run rejects async_chunk, so run requests need a server without it.
 run_server_params = [
     OmniServerParams(
-        model=MODEL, stage_config_path=_STAGE_CONFIG, server_args=["--trust-remote-code", "--no-async-chunk"]
+        model=MODEL,
+        stage_config_path=_STAGE_CONFIG,
+        server_args=["--trust-remote-code", "--no-async-chunk"],
+        env_dict={"VLLM_OMNI_ENABLE_RUN_ENDPOINT": "1"},
     )
 ]
 

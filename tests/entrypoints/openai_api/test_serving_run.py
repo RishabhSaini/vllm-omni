@@ -15,12 +15,19 @@ from vllm.outputs import CompletionOutput, RequestOutput
 from vllm.sampling_params import SamplingParams, StructuredOutputsParams
 from vllm.v1.engine import EngineCoreRequest
 
+from vllm_omni.config.endpoint_policy import shutdown_unsupported_routes
 from vllm_omni.engine.messages import NextStageInputMessage, OutputMessage
 from vllm_omni.engine.orchestrator import build_engine_core_request_from_tokens
 from vllm_omni.engine.serialization import serialize_additional_information
 from vllm_omni.entrypoints.openai import api_server
 from vllm_omni.entrypoints.openai.protocol.run import RunRequest
-from vllm_omni.entrypoints.openai.serving_run import ServingRun, decode_output, decode_stage_input, encode_payload
+from vllm_omni.entrypoints.openai.serving_run import (
+    ServingRun,
+    decode_output,
+    decode_stage_input,
+    encode_payload,
+    run_endpoint_restrictions,
+)
 from vllm_omni.errors import OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams
 from vllm_omni.lora.request import LoRARequest
@@ -173,3 +180,27 @@ def test_run_route_keeps_client_error_status():
     engine_client.run_entry_stage.side_effect = OmniClientError("bad prompt", status_code=status_code)
     response = _run_client(engine_client).post("/v1/run", json={"stage_input": _PROMPT})
     assert response.status_code == status_code
+
+
+@pytest.mark.parametrize("value", ["", "0"])
+def test_run_route_rejects_calls_unless_enabled_by_env(monkeypatch: pytest.MonkeyPatch, value: str):
+    """Ensure /v1/run returns 400 naming VLLM_OMNI_ENABLE_RUN_ENDPOINT unless that variable turns it on."""
+    monkeypatch.setenv("VLLM_OMNI_ENABLE_RUN_ENDPOINT", value)
+    client = _run_client()
+    shutdown_unsupported_routes(client.app, run_endpoint_restrictions())
+
+    response = client.post("/v1/run", json={"stage_input": _PROMPT})
+
+    assert response.status_code == 400
+    assert "VLLM_OMNI_ENABLE_RUN_ENDPOINT" in response.text
+
+
+def test_run_route_serves_calls_when_enabled_by_env(monkeypatch: pytest.MonkeyPatch):
+    """Ensure /v1/run serves calls when VLLM_OMNI_ENABLE_RUN_ENDPOINT=1."""
+    monkeypatch.setenv("VLLM_OMNI_ENABLE_RUN_ENDPOINT", "1")
+    client = _run_client()
+    shutdown_unsupported_routes(client.app, run_endpoint_restrictions())
+
+    response = client.post("/v1/run", json={"stage_input": _PROMPT})
+
+    assert response.status_code == 200

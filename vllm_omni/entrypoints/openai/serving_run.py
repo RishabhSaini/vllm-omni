@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -11,6 +12,7 @@ import pybase64 as base64
 from vllm.outputs import RequestOutput
 from vllm.sampling_params import SamplingParams
 
+from vllm_omni.config.endpoint_policy import EndpointRestriction, OmniServingCapability
 from vllm_omni.distributed.omni_connectors.utils.serialization import OmniMsgpackDecoder, OmniMsgpackEncoder
 from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.engine.messages import NextStageInputMessage, OutputMessage
@@ -20,6 +22,17 @@ from vllm_omni.entrypoints.openai.stage_params import to_sampling_params_list
 from vllm_omni.entrypoints.openai.utils import get_stage_type
 from vllm_omni.errors import OmniClientError
 from vllm_omni.inputs.data import OmniDiffusionSamplingParams, OmniSamplingParams
+
+# A modified stage_input can crash a stage, so /v1/run is only served when explicitly enabled.
+_RUN_ENDPOINT_ENV = "VLLM_OMNI_ENABLE_RUN_ENDPOINT"
+
+
+def run_endpoint_restrictions() -> tuple[EndpointRestriction, ...]:
+    """Restrict /v1/run unless VLLM_OMNI_ENABLE_RUN_ENDPOINT enables it."""
+    if os.environ.get(_RUN_ENDPOINT_ENV) == "1":
+        return ()
+    reason = f"/v1/run is disabled; set {_RUN_ENDPOINT_ENV}=1 to enable it for trusted callers."
+    return (EndpointRestriction(OmniServingCapability.RUN, reason),)
 
 
 def encode_payload(payload: NextStageInputMessage | RequestOutput) -> str:

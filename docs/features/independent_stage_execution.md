@@ -4,6 +4,9 @@
     This feature is **experimental**. The `POST /v1/run` request and response
     formats may change without notice.
 
+!!! danger
+    `POST /v1/run` returns 400 unless `VLLM_OMNI_ENABLE_RUN_ENDPOINT=1` is set. You should only enable it for trusted callers, because it is possible to modify `stage_input` in downstream stages to cause bad behaviors, e.g., crashing individual stages.
+
 `POST /v1/run` runs one stage per call. Instead of submitting a stage's result to the next stage, the server returns it, and the caller sends it back to run that stage. This lets callers route each call themselves, e.g., to independently scaled headless stages.
 
 ## Deployment
@@ -12,7 +15,7 @@ We will use Qwen3-TTS as an example for independent stage execution, illustratin
 
 ```bash
 # Starts the API server on port 8000
-vllm serve Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice \
+VLLM_OMNI_ENABLE_RUN_ENDPOINT=1 vllm serve Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice \
   --trust-remote-code \
   --no-async-chunk \
   --stage-id none \
