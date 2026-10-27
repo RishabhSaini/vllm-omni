@@ -40,8 +40,6 @@ def _next_stage_input(requests: list[EngineCoreRequest] | None = None) -> NextSt
         stage_output=None,
         prompt=_PROMPT,
         sampling_params_list=[SamplingParams(), SamplingParams()],
-        final_stage_id=1,
-        final_output_stage_ids=[1],
     )
 
 
@@ -163,6 +161,18 @@ async def test_downstream_stage_call_rejects_sampling_params():
 def test_run_route_returns_400_for_malformed_stage_input():
     """Ensure a stage_input that isn't a valid payload is a client error, not a server error."""
     response = _run_client().post("/v1/run", json={"stage_id": 1, "stage_input": "not a payload"})
+    assert response.status_code == 400
+
+
+@pytest.mark.parametrize(
+    "stage_ids",
+    [{"receiver_stage_id": 9999}, {"receiver_stage_id": -1}, {"receiver_stage_id": "1"}, {"source_stage_id": 1}],
+)
+def test_run_route_returns_400_for_stage_ids_outside_pipeline(stage_ids):
+    """Ensure a stage_input whose source stage doesn't precede a receiver in the pipeline is a client error."""
+    stage_input = msgspec.structs.replace(_next_stage_input(), **stage_ids)
+    body = {"stage_id": stage_input.receiver_stage_id, "stage_input": encode_payload(stage_input)}
+    response = _run_client().post("/v1/run", json=body)
     assert response.status_code == 400
 
 

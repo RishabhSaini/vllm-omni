@@ -578,6 +578,17 @@ async def _get_error_message(orchestrator_fixture: OrchestratorFixture, *, timeo
     raise AssertionError("Timed out waiting for orchestrator error")
 
 
+async def _assert_run_call_rejected(
+    orchestrator_fixture: OrchestratorFixture, receiver: FakeStageClient, msg: NextStageInputMessage
+) -> None:
+    """Send msg as the next call and check it fails with a 400 without reaching its receiver."""
+    _enqueue_downstream_call(orchestrator_fixture, msg, _CALL2_REQUEST_ID)
+    error = await _get_error_message(orchestrator_fixture)
+    assert (error.request_id, error.status_code) == (_CALL2_REQUEST_ID, 400)
+    assert receiver.add_request_calls == []
+    assert orchestrator_fixture.thread.is_alive()
+
+
 async def _get_rpc_message(
     orchestrator_fixture: OrchestratorFixture,
     *,
@@ -971,13 +982,11 @@ async def test_run_requests_rejected_with_async_chunk(orchestrator_factory) -> N
                 request_id=_CALL2_REQUEST_ID,
                 source_stage_id=0,
                 receiver_stage_id=1,
-                requests=[],
+                requests=[_processed_request(_CALL2_REQUEST_ID, _sampling_params())],
                 submit_kwargs=None,
                 stage_output=None,
                 prompt={"prompt": "hello"},
                 sampling_params_list=[_sampling_params(), _sampling_params()],
-                final_stage_id=1,
-                final_output_stage_ids=[1],
             )
         )
 
@@ -985,8 +994,80 @@ async def test_run_requests_rejected_with_async_chunk(orchestrator_factory) -> N
 
         assert all(isinstance(error, ErrorMessage) for error in errors)
         assert [error.request_id for error in errors] == [_CALL1_REQUEST_ID, _CALL2_REQUEST_ID]
+        assert errors[0].error == errors[1].error
         assert stage0.add_request_calls == []
         assert stage1.add_request_calls == []
+    finally:
+        await _shutdown_orchestrator(orchestrator_fixture)
+
+
+@pytest.mark.asyncio
+async def test_run_next_stage_input_is_routed_by_class_not_type_field(orchestrator_factory) -> None:
+    """Ensure a next stage input whose type field was changed still runs as a next stage input."""
+    orchestrator_fixture, stage1, _ = await _start_three_stage_run(orchestrator_factory, stage0_final_output=False)
+    try:
+        msg = _get_messages_until_response(orchestrator_fixture)[-1]
+        bad_msg = msgspec.structs.replace(msg, type="add_request")
+        _enqueue_downstream_call(orchestrator_fixture, bad_msg, _CALL2_REQUEST_ID)
+
+        await _wait_for(lambda: len(stage1.add_request_calls) == 1)
+        assert stage1.add_request_calls[0][0].request_id == _CALL2_REQUEST_ID
+        assert orchestrator_fixture.thread.is_alive()
+    finally:
+        await _shutdown_orchestrator(orchestrator_fixture)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"source_stage_id": 9999},
+        {"source_stage_id": 1},
+        {"receiver_stage_id": 9999},
+        {"receiver_stage_id": -1},
+        {"receiver_stage_id": "1"},
+        {"requests": []},
+        {"requests": [123]},
+        {"requests": "abc"},
+        {"sampling_params_list": []},
+        {"sampling_params_list": [{}, {}, {}]},
+        {"submit_kwargs": {"kv_sender_info": None}},  # Invalid since this is an LLM stage
+    ],
+)
+async def test_run_call_with_malformed_input_fails_with_400(orchestrator_factory, overrides) -> None:
+    """Ensure a malformed next stage input fails its call instead of reaching the orchestrator loop."""
+    orchestrator_fixture, stage1, _ = await _start_three_stage_run(orchestrator_factory, stage0_final_output=False)
+    try:
+        msg = _get_messages_until_response(orchestrator_fixture)[-1]
+        await _assert_run_call_rejected(orchestrator_fixture, stage1, msgspec.structs.replace(msg, **overrides))
+    finally:
+        await _shutdown_orchestrator(orchestrator_fixture)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"requests": [["a prompt"]]},
+        {"requests": [{"prompt": "a"}, {"prompt": "b"}]},
+        {"submit_kwargs": {"bogus": 1}},
+    ],
+)
+async def test_run_call_to_diffusion_stage_with_malformed_contents_fails_with_400(
+    orchestrator_factory, overrides
+) -> None:
+    """Ensure a next stage input for a diffusion stage fails its call unless it holds one prompt and known kwargs."""
+    stage0 = FakeStageClient(stage_type="llm", final_output=False)
+    stage1 = FakeStageClient(stage_type="diffusion", final_output=True, final_output_type="image")
+    stage0_processor = FakeOutputProcessor(request_outputs=_finished_outputs(_CALL1_REQUEST_ID))
+    orchestrator_fixture = orchestrator_factory([stage0, stage1], output_processors=[stage0_processor, None])
+    try:
+        await _enqueue_run_request(orchestrator_fixture)
+        await _wait_for(lambda: len(stage0.add_request_calls) == 1)
+        stage0.push_engine_core_outputs(_engine_core_outputs("stage0-raw", 1.0))
+        msg = _get_messages_until_response(orchestrator_fixture)[-1]
+        bad_msg = msgspec.structs.replace(msg, **overrides)
+        await _assert_run_call_rejected(orchestrator_fixture, stage1, bad_msg)
     finally:
         await _shutdown_orchestrator(orchestrator_fixture)
 

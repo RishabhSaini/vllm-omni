@@ -27,6 +27,7 @@ from vllm_omni.distributed.omni_coordinator.load_balancer import Task
 from vllm_omni.engine import OmniEngineCoreOutputs, PayloadSenderInfo
 from vllm_omni.engine.serialization import deserialize_additional_information
 from vllm_omni.engine.stage_client import (
+    DiffusionSubmitKwargs,
     StagePoolClient,
     StagePoolDiffusionClient,
     StagePoolLLMClient,
@@ -1072,7 +1073,7 @@ class StagePool:
         prompt_text: Any = None,
         affinity_request_id: str | None = None,
         pinned_replica_id: int | None = None,
-        submit_kwargs: dict[str, Any] | None = None,
+        submit_kwargs: DiffusionSubmitKwargs | None = None,
         params_override: Any = None,
         expected_replica_id: int | None = None,
     ) -> int:
@@ -1081,7 +1082,7 @@ class StagePool:
         # Direct engine callers may provide plain vLLM SamplingParams.
         if self.stage_type == "diffusion":
             params = OmniDiffusionSamplingParams.from_params(params)
-        submit_kwargs = dict(submit_kwargs or {})
+        submit_kwargs = DiffusionSubmitKwargs() if submit_kwargs is None else submit_kwargs.copy()
         if self.stage_type == "diffusion":
             if isinstance(request, list):
                 raise ValueError(
@@ -1132,7 +1133,7 @@ class StagePool:
             raise
 
         try:
-            await self._llm_client(replica_id).add_request_async(request, **submit_kwargs)
+            await self._llm_client(replica_id).add_request_async(request)
         except BaseException:
             # Sending can fail or be cancelled after the engine accepted the
             # request. Abort while its replica binding is still available.
@@ -1171,10 +1172,10 @@ class StagePool:
         *,
         prompt_text: Any = None,
         pinned_replica_id: int | None = None,
-        submit_kwargs: dict[str, Any] | None = None,
+        submit_kwargs: DiffusionSubmitKwargs | None = None,
     ) -> int:
         """Submit a streaming update to an already admitted request."""
-        submit_kwargs = submit_kwargs or {}
+        submit_kwargs = submit_kwargs or DiffusionSubmitKwargs()
         params = req_state.sampling_params_list[self.stage_id]
         if self.stage_type == "diffusion":
             params = OmniDiffusionSamplingParams.from_params(params)
@@ -1210,7 +1211,7 @@ class StagePool:
                     request_index=0,
                     queue=None,
                 )
-                await self._llm_client(replica_id).add_request_async(request, **submit_kwargs)
+                await self._llm_client(replica_id).add_request_async(request)
             except Exception:
                 rollback = getattr(self.output_processor, "remove_request", None)
                 if callable(rollback):

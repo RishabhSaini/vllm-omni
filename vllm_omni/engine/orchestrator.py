@@ -78,6 +78,7 @@ from vllm_omni.engine.messages import (
 )
 from vllm_omni.engine.orchestrator_monitor import create_orch_monitor, replica_key
 from vllm_omni.engine.serialization import serialize_additional_information
+from vllm_omni.engine.stage_client import DiffusionSubmitKwargs
 from vllm_omni.engine.stage_pool import StagePool, StageUnavailableError
 from vllm_omni.errors import DEFAULT_CLIENT_ERROR_TYPE, OmniClientError
 from vllm_omni.inputs.data import OmniPromptType, OmniSamplingParams
@@ -3169,7 +3170,7 @@ class OrchestratorBase:
         receiver_stage_id: int,
         already_submitted: bool,
         t_submit_start: float,
-        submit_kwargs: dict[str, Any] | None = None,
+        submit_kwargs: DiffusionSubmitKwargs | None = None,
         params_override: OmniSamplingParams | None = None,
         pinned_replica_id: int | None = None,
     ) -> None:
@@ -3217,7 +3218,7 @@ class OrchestratorBase:
         *,
         source_stage_id: int,
         receiver_stage_id: int,
-        submit_kwargs: dict[str, Any] | None,
+        submit_kwargs: DiffusionSubmitKwargs | None,
         params_override: OmniSamplingParams | None,
     ) -> None:
         """End a request at its yielded stage and return the next stage's input to the caller."""
@@ -3237,8 +3238,6 @@ class OrchestratorBase:
                 stage_output=req_state.yield_stage_output,
                 prompt=req_state.prompt,
                 sampling_params_list=sampling_params_list,
-                final_stage_id=req_state.final_stage_id,
-                final_output_stage_ids=list(req_state.final_output_stage_ids),
             )
         )
 
@@ -3486,7 +3485,7 @@ class OrchestratorBase:
         next_client: Any,
         req_state: OrchestratorRequestState,
         output: Any = None,
-    ) -> dict[str, Any]:
+    ) -> DiffusionSubmitKwargs:
         source_stage_ids = list(getattr(next_client, "engine_input_source", None) or [source_stage_id])
         if req_state.native_kv_transfer_id is None:
             return {"kv_sender_info": self._build_kv_sender_info(source_stage_ids, request_id=request_id)}
@@ -3606,6 +3605,11 @@ class Orchestrator(OrchestratorBase):
             await asyncio.gather(consumer, shutdown, return_exceptions=True)
 
     async def _dispatch_message(self, msg: EngineQueueMessage) -> bool:
+        # Callers can modify run payloads, including the type field, so route them by class
+        # to prevent potential malicious behaviors, since doing so could kill the orchestrator
+        if isinstance(msg, NextStageInputMessage):
+            await self._handle_next_stage_input(msg)
+            return True
         msg_type = msg.type
         if msg_type == "add_request":
             await self._handle_add_request(msg)
@@ -3629,8 +3633,6 @@ class Orchestrator(OrchestratorBase):
                         stage_id=0,
                     )
                 )
-        elif msg_type == "next_stage_input":
-            await self._handle_next_stage_input(msg)
         else:
             return False
         return True
@@ -3652,17 +3654,25 @@ class Orchestrator(OrchestratorBase):
         """Submit a next stage input returned by an earlier request as a new request at its receiver stage."""
         req_id = msg.request_id
         receiver_stage_id = msg.receiver_stage_id
+        try:
+            msg.ensure_valid([pool.stage_type for pool in self.stage_pools])
+        except ValueError as exc:
+            await self._fail_request_client_error(req_id, receiver_stage_id, str(exc))
+            return
         if await self._fail_if_cannot_submit(req_id, receiver_stage_id, is_run_request=True):
             return
 
-        yield_stage_id = receiver_stage_id if receiver_stage_id < msg.final_stage_id else None
+        # TODO (Alex): Current run requests always end at the last stage, but this should
+        # be determinable from output modalities, e.g., thinker vs code2wav for qwen3omni
+        final_stage_id = self.num_stages - 1
+        yield_stage_id = receiver_stage_id if receiver_stage_id < final_stage_id else None
         req_state = OrchestratorRequestState(
             request_id=req_id,
             prompt=msg.prompt,
             sampling_params_list=msg.sampling_params_list,
-            final_stage_id=msg.final_stage_id,
+            final_stage_id=final_stage_id,
             entry_stage_id=receiver_stage_id,
-            final_output_stage_ids=set(msg.final_output_stage_ids),
+            final_output_stage_ids={final_stage_id},
             yield_stage_id=yield_stage_id,
             yield_stage_output=msg.stage_output,
             request_timestamp=_time.time(),
