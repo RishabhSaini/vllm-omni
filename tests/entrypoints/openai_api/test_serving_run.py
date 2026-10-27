@@ -84,14 +84,13 @@ def test_stage_input_round_trips_sampling_params():
     assert decoded.sampling_params_list == stage_input.sampling_params_list
 
 
-@pytest.mark.asyncio
-async def test_non_final_call_returns_next_stage_id_and_stage_input():
-    """Ensure a call that yields returns the next stage's id and its encoded input."""
+def test_non_final_call_returns_only_next_stage_id_and_stage_input():
+    """Ensure a call that yields returns only the next stage's id and its encoded input, with no output key."""
     next_stage_input = _next_stage_input()
-    serving = ServingRun(_engine_client(next_stage_input))
-    response = await serving.run(RunRequest(stage_input=_PROMPT), request_id="run-entry")
-    assert response.stage_id == next_stage_input.receiver_stage_id
-    assert decode_stage_input(response.stage_input, serving.stage_types) == next_stage_input
+    body = _run_client(_engine_client(next_stage_input)).post("/v1/run", json={"stage_input": _PROMPT}).json()
+    assert set(body) == {"stage_id", "stage_input"}
+    assert body["stage_id"] == next_stage_input.receiver_stage_id
+    assert decode_stage_input(body["stage_input"], ("llm", "llm")) == next_stage_input
 
 
 @pytest.mark.asyncio
@@ -174,9 +173,3 @@ def test_run_route_keeps_client_error_status():
     engine_client.run_entry_stage.side_effect = OmniClientError("bad prompt", status_code=status_code)
     response = _run_client(engine_client).post("/v1/run", json={"stage_input": _PROMPT})
     assert response.status_code == status_code
-
-
-def test_run_route_omits_unset_response_fields():
-    """Ensure a non-final response has no output key, so clients can tell it from the final one."""
-    body = _run_client().post("/v1/run", json={"stage_input": _PROMPT}).json()
-    assert set(body) == {"stage_id", "stage_input"}

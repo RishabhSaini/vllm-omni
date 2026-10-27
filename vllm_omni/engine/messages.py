@@ -161,10 +161,7 @@ class NextStageInputMessage(EngineQueueMessage, kw_only=True):
         self._check_submit_kwargs(receiver_type)
 
     def check_stage_ids(self, num_stages: int) -> None:
-        """Raise ValueError unless the source stage precedes a receiver stage in the pipeline.
-
-        Callers can modify run payloads, so the ids may be any type.
-        """
+        """Raise ValueError unless the source stage precedes a receiver stage in the pipeline."""
         source = self.source_stage_id
         receiver = self.receiver_stage_id
         if not (isinstance(source, int) and isinstance(receiver, int) and 0 <= source < receiver < num_stages):

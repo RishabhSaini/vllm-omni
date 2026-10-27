@@ -106,8 +106,6 @@ def cleanup_request_artifact_dirs(artifact_dirs: set[str] | list[str]) -> None:
 # VLLM_OMNI_EVENT_DRIVEN_ORCH=0 selects the legacy 1 ms poll loop instead.
 _EVENT_DRIVEN_ORCH_ENV = "VLLM_OMNI_EVENT_DRIVEN_ORCH"
 
-_RUN_STAGE_ASYNC_CHUNK_ERROR = "Async chunking is not supported for individual stage processing"
-
 # How often the event-driven loop reconciles its reader-task set against
 # `available_replica_ids()` (elastic membership, replica eviction) while idle.
 _ORCH_READER_RECONCILE_INTERVAL_S = 0.5
@@ -3645,7 +3643,9 @@ class Orchestrator(OrchestratorBase):
             await self._fail_request_dead_stage(req_id, stage_id)
             return True
         if is_run_request and self.async_chunk:
-            await self._fail_request_client_error(req_id, stage_id, _RUN_STAGE_ASYNC_CHUNK_ERROR)
+            await self._fail_request_client_error(
+                req_id, stage_id, "Async chunking is not supported for individual stage processing"
+            )
             return True
         return False
 

@@ -4,7 +4,7 @@
     This feature is **experimental**. The `POST /v1/run` request and response
     formats may change without notice.
 
-vLLM-Omni supports running stages independently, where the payload is yielded back to the user rather than submitted to the next stage. This provides the groundwork for high-scale distributed serving by decoupling the frontend (API Server & Orchestrator) from independently scalable headless stages, which will eventually allow users to manage their own routing, e.g., based on scoring heuristics.
+`POST /v1/run` runs one stage per call. Instead of submitting a stage's result to the next stage, the server returns it, and the caller sends it back to run that stage. This lets callers route each call themselves, e.g., to independently scaled headless stages.
 
 ## Deployment
 
@@ -51,7 +51,7 @@ You should see both stage 0 and stage 1 register as replicas with the `OmniMaste
 
 In the preliminary implementation, there is no preprocessing or postprocessing done on the request and response objects, so you need to build the stage 0 inputs and unpack the final response directly.
 
-After the first inference call, we can pipe the output directly back into `/v1/run` to run the second stage. Currently, the output is encoded since it is the raw yielded payload, so we provide a helper to unpack the raw message. Sampling params currently must be be set on the stage 0 call and are rejected on direct calls to downstream stages. You can see the full flow below.
+After the first inference call, we can pipe the output directly back into `/v1/run` to run the second stage. Currently, the output is encoded since it is the raw yielded payload, so we provide a helper to unpack the raw message. Sampling params currently must be set on the stage 0 call and are rejected on direct calls to downstream stages. You can see the full flow below.
 
 ```python
 import argparse
@@ -64,7 +64,6 @@ from transformers import AutoTokenizer
 
 from vllm_omni.entrypoints.openai.protocol.audio import OpenAICreateSpeechRequest
 from vllm_omni.entrypoints.openai.serving_run import decode_output
-from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
 from vllm_omni.entrypoints.openai.tts_adapters.base import conditioning_cache_salt
 from vllm_omni.model_executor.models.qwen3_tts.prompt_embeds_builder import Qwen3TTSPromptEmbedsBuilder
 
@@ -120,8 +119,8 @@ def main() -> None:
     # For now, since we don't have postprocessing, we call a helper to unpack the message for us
     decoded_output = decode_output(final.json()["output"])
     # Then extract the speech and save it
-    audio_output, audio_key = OmniOpenAIServingSpeech._extract_audio_output(decoded_output)
-    sf.write(args.out, audio_output[audio_key].float().numpy().squeeze(), int(audio_output["sr"]))
+    audio_output = decoded_output.outputs[0].multimodal_output
+    sf.write(args.out, audio_output["audio"].float().numpy().squeeze(), int(audio_output["sr"]))
     print(f"wrote {args.out}")
 
 
@@ -131,8 +130,9 @@ if __name__ == "__main__":
 
 ## Limitations
 
-This feature is early in its development and currently has the following constraints, many of which are being actively worked on.
+This feature is early in its development and currently has the following gaps.
 
-- Support for emulating different entrypoints' preprocessing and postprocessing through `/v1/run`
-- API for passing the `/v1/run` request to a specific replica
-- Support for async chunking
+- The server passes `stage_input` to the stages largely as is. Send back the one returned by the previous call unchanged, and only expose `/v1/run` to trusted callers: a modified payload can crash a stage or the server.
+- The final response only has the last stage's output.
+- No route-specific preprocessing or postprocessing yet, so callers build the stage 0 input and unpack the final output themselves.
+- Async chunking isn't supported.

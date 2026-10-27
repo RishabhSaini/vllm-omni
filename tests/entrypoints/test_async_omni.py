@@ -859,7 +859,7 @@ def _next_stage_input(request_id: str) -> NextStageInputMessage:
 
 @pytest.mark.cpu
 def test_run_entry_stage_yields_at_entry_stage():
-    """Ensure the entry stage call yields at stage 0 and returns the next stage input."""
+    """Ensure the entry stage call yields at stage 0 with FINAL_ONLY params and returns the next stage input."""
 
     async def run():
         omni = get_async_omni_instance()
@@ -871,38 +871,17 @@ def test_run_entry_stage_yields_at_entry_stage():
             omni.request_states[request_id].queue.put_nowait(_next_stage_input(request_id))
 
         omni.engine.add_request_async = fake_add_request_async
+        delta_params = SamplingParams(output_kind=RequestOutputKind.DELTA)
 
         response = await omni.run_entry_stage(
-            {"prompt": "hi"}, [SamplingParams(), SamplingParams()], request_id="entry-call"
+            {"prompt": "hi"}, [delta_params, SamplingParams()], request_id="entry-call"
         )
 
         assert isinstance(response, NextStageInputMessage)
         assert re.fullmatch(r"entry-call-[0-9a-f]{8}-0", submitted["request_id"])
         assert (submitted["final_stage_id"], submitted["yield_stage_id"]) == (1, 0)
-        assert omni.request_states == {}
-
-    asyncio.run(run())
-
-
-@pytest.mark.cpu
-def test_run_entry_stage_submits_final_only_params():
-    """Ensure the entry stage call runs with FINAL_ONLY params, since each call returns one complete output."""
-
-    async def run():
-        omni = get_async_omni_instance()
-        omni.engine.num_stages = 2
-        submitted: dict[str, Any] = {}
-
-        async def fake_add_request_async(*, request_id, sampling_params_list, **kwargs):
-            submitted["sampling_params_list"] = sampling_params_list
-            omni.request_states[request_id].queue.put_nowait(_next_stage_input(request_id))
-
-        omni.engine.add_request_async = fake_add_request_async
-        delta_params = SamplingParams(output_kind=RequestOutputKind.DELTA)
-
-        await omni.run_entry_stage({"prompt": "hi"}, [delta_params, SamplingParams()], request_id="entry-call")
-
         assert all(params.output_kind == RequestOutputKind.FINAL_ONLY for params in submitted["sampling_params_list"])
+        assert omni.request_states == {}
 
     asyncio.run(run())
 
