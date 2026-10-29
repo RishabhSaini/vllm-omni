@@ -364,15 +364,14 @@ class _SpeechStreamingResponse(StreamingResponse):
 
 
 def _ensure_cache_salt(adapter, request, prompt: dict, tts_params: dict | None) -> None:
-    # KV prefix-cache salt precedence: adapter-computed wins; otherwise a
-    # caller namespace composed with the derived conditioning identity.
-    # Talker prompts are placeholder token IDs, so an unsalted request
-    # collides with every other; diffusion pipelines never reach here.
-    # Composing (not replacing) keeps voice/input isolation when a caller
-    # salt narrows sharing further (tenants, sessions).
-    if not isinstance(adapter, ARTTSAdapter) or "cache_salt" in prompt:
+    # Placeholder-token prompts collide in the prefix cache across different
+    # inputs unless salted; diffusion pipelines never reach here. Base
+    # identity is whatever build() already set, else the derived default.
+    # Compose with a caller salt rather than replace, so narrowing by
+    # tenant/session doesn't lose voice/input isolation.
+    if not isinstance(adapter, ARTTSAdapter):
         return
-    derived = conditioning_cache_salt(request, tts_params)
+    derived = prompt.get("cache_salt") or conditioning_cache_salt(request, tts_params)
     client_salt = request.cache_salt
     prompt["cache_salt"] = f"{client_salt}:{derived}" if client_salt else derived
 
@@ -2325,9 +2324,8 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
             tts_params = {}
             prompt = {"prompt": request.input}
             if request.cache_salt is not None:
-                # No TTS adapter here, so no derived conditioning identity to
-                # compose with; forward the caller's salt as-is, matching
-                # serving_chat.py's cache_salt passthrough.
+                # No adapter identity to compose with; forward as-is,
+                # matching serving_chat.py's cache_salt passthrough.
                 prompt["cache_salt"] = request.cache_salt
             output_policy = OutputPolicy()
 

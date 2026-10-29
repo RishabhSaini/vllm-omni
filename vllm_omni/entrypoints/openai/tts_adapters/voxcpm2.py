@@ -129,10 +129,8 @@ class VoxCPM2Adapter(ARTTSAdapter):
                 additional = prompt.setdefault("additional_information", {})
                 additional["voice_name"] = voice_lower
                 additional["voice_created_at"] = created_at
-                # Fold into tts_params too: conditioning_cache_salt() reads
-                # voice_created_at from here, so a re-uploaded voice (same
-                # name, new content) gets a fresh derived salt instead of
-                # reusing stale placeholder-token KV blocks.
+                # conditioning_cache_salt() reads voice_created_at from
+                # tts_params, so a re-upload mints a fresh derived salt.
                 tts_params["voice_created_at"] = created_at
         return PreparedRequest(prompt=prompt, tts_params=tts_params, model_type="voxcpm2")
 

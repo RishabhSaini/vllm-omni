@@ -65,6 +65,7 @@ def test_default_salt_stable_and_sensitive() -> None:
 
 
 def test_explicit_salt_wins() -> None:
+    """With no caller salt, an adapter-computed salt is used as-is."""
     adapter = _ar_adapter()
     prompt = {"cache_salt": "adapter-provided"}
     _ensure_cache_salt(adapter, _request(), prompt, {})
@@ -90,11 +91,13 @@ def test_client_salt_composes_with_derived_identity() -> None:
     assert other_voice["cache_salt"] != salt
 
 
-def test_explicit_salt_beats_client_salt() -> None:
+def test_explicit_salt_composes_with_client_salt() -> None:
+    """An adapter-computed salt is the base identity composed with a caller
+    salt, not a value that drops the caller's namespace entirely."""
     adapter = _ar_adapter()
     prompt = {"cache_salt": "adapter-provided"}
     _ensure_cache_salt(adapter, _request(cache_salt="tenant-7"), prompt, {})
-    assert prompt["cache_salt"] == "adapter-provided"
+    assert prompt["cache_salt"] == "tenant-7:adapter-provided"
 
 
 def test_invalid_client_salt_rejected() -> None:
@@ -165,9 +168,7 @@ def _make_server():
 
 
 def _make_adapterless_server():
-    """No TTS adapter resolves for this model type (engine.stage_configs
-    defaults to an empty MagicMock iterator, so the talker guard doesn't
-    trip either)."""
+    """No TTS adapter resolves (empty stage_configs skips the talker guard)."""
     engine = MagicMock()
     engine.errored = False
     engine.default_sampling_params_list = [{}]
@@ -182,9 +183,7 @@ def _make_adapterless_server():
 
 
 async def test_prepare_speech_generation_without_adapter_forwards_client_salt() -> None:
-    """No adapter means no derived conditioning identity to compose with, so
-    a caller-supplied salt is forwarded as-is, mirroring serving_chat.py's
-    cache_salt passthrough."""
+    """No adapter identity to compose with; forward the caller salt as-is."""
     server, engine = _make_adapterless_server()
 
     await server._prepare_speech_generation(_request(cache_salt="tenant-7"))
