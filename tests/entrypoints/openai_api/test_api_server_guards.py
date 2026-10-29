@@ -1497,7 +1497,7 @@ async def test_multistage_app_state_key_snapshot(
     disabled = (
         set()
         if "generate" in supported_tasks
-        else {"openai_serving_chat", "openai_serving_chat_batch", "openai_streaming_video"}
+        else {"openai_serving_chat", "openai_serving_chat_batch", "openai_streaming_video", "serving_render"}
     )
     robot = {"openai_serving_realtime_robot"} if policy_server else set()
     _assert_app_state_snapshot(

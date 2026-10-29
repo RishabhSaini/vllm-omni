@@ -512,13 +512,38 @@ def test_stage_cli_kv_events_config_owned_by_llm_stage():
     assert config.stage_by_id(0).scheduler_config.kv_events_config == _KV_EVENTS_CONFIG
 
 
-def test_global_kv_events_config_rejected_with_stage_scoped_hint():
-    with pytest.raises(ValueError) as exc_info:
-        _from_pipeline_key("qwen3_tts", cli_overrides={"kv_events_config": dict(_KV_EVENTS_CONFIG)})
+def test_global_kv_events_config_fans_out_with_per_stage_offsets():
+    config = _from_pipeline_key("qwen3_tts", cli_overrides={"kv_events_config": dict(_KV_EVENTS_CONFIG)})
 
-    message = str(exc_info.value)
-    assert "no structured config owner: kv_events_config" in message
-    assert "stage-scoped only" in message
+    stage0 = config.stage_by_id(0).scheduler_config.kv_events_config
+    stage1 = config.stage_by_id(1).scheduler_config.kv_events_config
+    assert stage0 is not None and stage1 is not None
+    # Stage 0 keeps the original (offset by 0); stage 1 is diversified.
+    assert stage0["endpoint"] == _KV_EVENTS_CONFIG["endpoint"]
+    assert stage0["topic"] == f"{_KV_EVENTS_CONFIG['topic']}-s0"
+    assert stage1["endpoint"] != stage0["endpoint"]
+    assert stage1["replay_endpoint"] != stage0["replay_endpoint"]
+    assert stage1["topic"] == f"{_KV_EVENTS_CONFIG['topic']}-s1"
+
+
+def test_global_kv_events_config_explicit_stage_override_not_offset():
+    """An explicit per-stage value coexisting with the global flag is left
+    verbatim -- the caller already differentiated it."""
+    explicit = {**_KV_EVENTS_CONFIG, "topic": "explicit-topic"}
+    config = _from_pipeline_key(
+        "qwen3_tts",
+        cli_overrides={
+            "kv_events_config": dict(_KV_EVENTS_CONFIG),
+            "stage_1_kv_events_config": dict(explicit),
+        },
+    )
+
+    assert config.stage_by_id(1).scheduler_config.kv_events_config == explicit
+
+
+def test_kv_events_config_rejected_on_diffusion_stage():
+    with pytest.raises(ValueError, match="diffusion.*cannot set 'kv_events_config'"):
+        _build_single_diffusion_config(engine_extras={"kv_events_config": dict(_KV_EVENTS_CONFIG)})
 
 
 def test_kv_events_config_projects_to_engine_args():
@@ -1304,6 +1329,7 @@ def test_sub_config_fields_match_structured_scopes():
     assert issubclass(OmniStageSchedulerConfig, VllmSchedulerConfig)
     assert {f.name for f in fields(OmniStageSchedulerConfig)} == {f.name for f in fields(VllmSchedulerConfig)} | {
         "max_model_len",
+        "kv_events_config",
     }
     assert {f.name for f in fields(OmniStageConnectorConfig)} == {
         "async_chunk",

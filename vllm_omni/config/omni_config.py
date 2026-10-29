@@ -243,7 +243,6 @@ class _SchedulerEngineOverrides(TypedDict, total=False):
     max_model_len: int
     enable_chunked_prefill: bool
     async_scheduling: bool
-    kv_events_config: dict[str, Any]
 
 
 class _RuntimeEngineOverrides(TypedDict, total=False):
@@ -379,9 +378,6 @@ def _stage_cli_overrides(
     runtime_overrides = build_stage_runtime_overrides(stage_id, dict(cli_overrides))
     global_stage_fields = _global_stage_cli_fields() | _OWNER_ONLY_GLOBAL_STAGE_CLI_FIELDS
     owned_fields = None if execution_type is None else _STAGE_ENGINE_FIELDS_BY_EXECUTION_TYPE[execution_type]
-    if owned_fields is not None:
-        # Stage-scoped-only inputs must not fan out from a global flag.
-        owned_fields = owned_fields - _STAGE_SCOPED_ONLY_ENGINE_FIELDS
     result: dict[str, Any] = {}
     for key, value in runtime_overrides.items():
         stage_key = f"stage_{stage_id}_{key}"
@@ -393,7 +389,14 @@ def _stage_cli_overrides(
         ):
             continue
         if stage_specific or (key in global_stage_fields and (owned_fields is None or key in owned_fields)):
-            result[key] = _copy_value(value)
+            value = _copy_value(value)
+            if key == "kv_events_config" and not stage_specific and isinstance(value, Mapping):
+                # A bare --kv-events-config fans the same value out to every
+                # owning stage; diversify per stage so publishers don't bind
+                # the same endpoint/topic (an explicit per-stage value is
+                # left untouched -- the caller already differentiated it).
+                value = _offset_kv_events_config_for_stage(value, stage_id)
+            result[key] = value
 
     # step_execution is a diffusion execution protocol, not an LLM engine
     # argument. Keep global and stage-scoped CLI values off AR/generation stages.
@@ -415,10 +418,31 @@ def _stage_cli_overrides(
     return result
 
 
-# Engine inputs meaningful per stage only: a global value would fan every
-# LLM_AR stage out to one ZMQ publisher socket with incompatible block-key
-# spaces. Configure per stage (--stage-overrides / stages[].kv_events_config).
-_STAGE_SCOPED_ONLY_ENGINE_FIELDS = frozenset({"kv_events_config"})
+# Headroom per stage so a replica's own per-DP-rank port offset (applied by
+# vLLM's ZmqEventPublisher) and StageRuntime._prepare_replica_vllm_config's
+# own per-replica offset never spill into the next stage's range.
+_KV_EVENTS_STAGE_PORT_STRIDE = 4096
+
+
+def _offset_kv_events_config_for_stage(kv_events_config: Mapping[str, Any], stage_id: int) -> dict[str, Any]:
+    """Diversify a globally fanned-out kv_events_config for one stage.
+
+    A bare --kv-events-config fans the same value out to every owning stage;
+    without this, every stage's publisher would bind the same endpoint and
+    topic. Reuses vLLM's own DP-rank port-offset helper so the parsing edge
+    cases (tcp port 0, inproc endpoints) match exactly.
+    """
+    from vllm.config.kv_events import KVEventsConfig
+    from vllm.distributed.kv_events import ZmqEventPublisher
+
+    result = dict(kv_events_config)
+    offset = stage_id * _KV_EVENTS_STAGE_PORT_STRIDE
+    result["endpoint"] = ZmqEventPublisher.offset_endpoint_port(result.get("endpoint", KVEventsConfig.endpoint), offset)
+    replay_endpoint = result.get("replay_endpoint", KVEventsConfig.replay_endpoint)
+    if replay_endpoint:
+        result["replay_endpoint"] = ZmqEventPublisher.offset_endpoint_port(replay_endpoint, offset)
+    result["topic"] = f"{result.get('topic', KVEventsConfig.topic)}-s{stage_id}"
+    return result
 
 
 def _validate_global_stage_cli_ownership(
@@ -432,26 +456,15 @@ def _validate_global_stage_cli_ownership(
     owned_fields = {
         field for stage in pipeline.stages for field in _STAGE_ENGINE_FIELDS_BY_EXECUTION_TYPE[stage.execution_type]
     }
-    # Stage-scoped-only inputs stay rejected as globals (would fan out).
-    unowned_fields = (explicit_global_fields - owned_fields) | (
-        explicit_global_fields & _STAGE_SCOPED_ONLY_ENGINE_FIELDS
-    )
+    unowned_fields = explicit_global_fields - owned_fields
     if any(stage.execution_type == StageExecutionType.DIFFUSION for stage in pipeline.stages):
         # Mixed engine ingress accepts these shared globals, but diffusion
         # stages deliberately leave them outside their terminal config.
         unowned_fields -= _DIFFUSION_SHARED_ONLY_ENGINE_FIELDS
     if unowned_fields:
         names = ", ".join(sorted(unowned_fields))
-        hint = ""
-        if unowned_fields & _STAGE_SCOPED_ONLY_ENGINE_FIELDS:
-            hint = (
-                " (stage-scoped only: pass per stage via --stage-overrides "
-                '\'{"<stage_id>": {"kv_events_config": {...}}}\' or deploy '
-                "stages[].kv_events_config, publishing from the entry stage only)"
-            )
         raise ValueError(
             f"Pipeline {pipeline.model_type!r} has explicit engine argument(s) with no structured config owner: {names}"
-            f"{hint}"
         )
 
 
@@ -1631,6 +1644,11 @@ def _stage_engine_values(
             else:
                 engine[key] = _copy_value(value)
     if topology.execution_type == StageExecutionType.DIFFUSION:
+        if engine.get("kv_events_config") is not None:
+            raise ValueError(
+                f"Stage {topology.stage_id} (diffusion) cannot set 'kv_events_config': "
+                "diffusion stages have no vLLM KV cache to publish events from."
+            )
         diffusion_kwargs = extract_diffusion_stage_config_kwargs(engine, stage_id=topology.stage_id)
     else:
         diffusion_kwargs = {}
