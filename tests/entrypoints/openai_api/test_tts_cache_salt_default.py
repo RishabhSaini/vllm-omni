@@ -162,3 +162,41 @@ def _make_server():
     fake = _UnsaltedAdapter()
     server._get_tts_adapter = lambda: fake  # noqa: E731
     return server, fake
+
+
+def _make_adapterless_server():
+    """No TTS adapter resolves for this model type (engine.stage_configs
+    defaults to an empty MagicMock iterator, so the talker guard doesn't
+    trip either)."""
+    engine = MagicMock()
+    engine.errored = False
+    engine.default_sampling_params_list = [{}]
+    server = OmniOpenAIServingSpeech(
+        engine_client=engine,
+        models=MagicMock(),
+        request_logger=MagicMock(),
+    )
+    server.model_config = SimpleNamespace(async_chunk=True)
+    server._get_tts_adapter = lambda: None  # noqa: E731
+    return server, engine
+
+
+async def test_prepare_speech_generation_without_adapter_forwards_client_salt() -> None:
+    """No adapter means no derived conditioning identity to compose with, so
+    a caller-supplied salt is forwarded as-is, mirroring serving_chat.py's
+    cache_salt passthrough."""
+    server, engine = _make_adapterless_server()
+
+    await server._prepare_speech_generation(_request(cache_salt="tenant-7"))
+
+    _, kwargs = engine.generate.call_args
+    assert kwargs["prompt"]["cache_salt"] == "tenant-7"
+
+
+async def test_prepare_speech_generation_without_adapter_skips_salt_when_absent() -> None:
+    server, engine = _make_adapterless_server()
+
+    await server._prepare_speech_generation(_request())
+
+    _, kwargs = engine.generate.call_args
+    assert "cache_salt" not in kwargs["prompt"]

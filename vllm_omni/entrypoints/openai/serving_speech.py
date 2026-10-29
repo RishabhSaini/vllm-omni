@@ -2324,6 +2324,11 @@ class OmniOpenAIServingSpeech(OpenAIServing, AudioMixin):
                 )
             tts_params = {}
             prompt = {"prompt": request.input}
+            if request.cache_salt is not None:
+                # No TTS adapter here, so no derived conditioning identity to
+                # compose with; forward the caller's salt as-is, matching
+                # serving_chat.py's cache_salt passthrough.
+                prompt["cache_salt"] = request.cache_salt
             output_policy = OutputPolicy()
 
         if model_type is None:

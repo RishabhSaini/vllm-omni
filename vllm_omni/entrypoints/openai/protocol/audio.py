@@ -176,8 +176,7 @@ class OpenAICreateSpeechRequest(BaseModel):
         description="Caller-supplied prefix-cache salt namespace. Composed "
         "with the server-derived conditioning identity, so callers narrow "
         "sharing (tenants, sessions) without dropping voice/input isolation. "
-        "Adapter-computed salts still win. Same contract as vLLM "
-        "chat/completions.",
+        "Adapter-computed salts still win.",
     )
 
     @field_validator("cache_salt", mode="before")

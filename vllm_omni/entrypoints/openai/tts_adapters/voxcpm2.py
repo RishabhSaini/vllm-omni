@@ -125,9 +125,15 @@ class VoxCPM2Adapter(ARTTSAdapter):
         if request.voice:
             voice_lower = request.voice.lower()
             if voice_lower in server.uploaded_speakers or voice_lower in self.capabilities.precomputed_speakers:
+                created_at = server._voice_created_at(voice_lower)
                 additional = prompt.setdefault("additional_information", {})
                 additional["voice_name"] = voice_lower
-                additional["voice_created_at"] = server._voice_created_at(voice_lower)
+                additional["voice_created_at"] = created_at
+                # Fold into tts_params too: conditioning_cache_salt() reads
+                # voice_created_at from here, so a re-uploaded voice (same
+                # name, new content) gets a fresh derived salt instead of
+                # reusing stale placeholder-token KV blocks.
+                tts_params["voice_created_at"] = created_at
         return PreparedRequest(prompt=prompt, tts_params=tts_params, model_type="voxcpm2")
 
     async def warmup(self) -> None:
