@@ -9,7 +9,7 @@ costing the warmup time back.
 
 Uses plain imports rather than test_code_predictor_dtype.py's mocked-import
 harness: mocking current_omni_platform there makes Dynamo hit a graph break
-and mis-specialize the batch dim, unrelated to this fix.
+and wrongly specialize the batch dim, unrelated to this fix.
 """
 
 import types
