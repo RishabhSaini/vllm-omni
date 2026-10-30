@@ -73,6 +73,16 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
             talker_config=talker_config,
         ).to(device="cuda", dtype=torch.bfloat16)
 
+        # _setup_compile() derives its own cache_size_limit from bucket count
+        # alone (2 for this branch), independent of whether mark_dynamic runs.
+        # Left as-is, a regression that drops mark_dynamic would hit that
+        # limit after 2 real compiles and fall back to eager for the rest --
+        # invisible to CompileCounter, which only sees compile attempts. A
+        # generous override here isolates what this test actually checks.
+        mocker.patch.object(
+            predictor, "_compile_cache_size_limit", return_value=len(predictor._batch_bucket_sizes()) + 1
+        )
+
         # Pins the branch: the frame-local KV path returns before calling the
         # base _warmup_buckets(), which would otherwise fail below with a
         # confusing frame_count mismatch instead of a clear assertion here.
