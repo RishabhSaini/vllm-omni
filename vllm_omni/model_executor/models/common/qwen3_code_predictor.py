@@ -1104,13 +1104,15 @@ class CodePredictorWrapper(nn.Module):
 
     def _compile_cache_size_limit(self) -> int:
         bucket_sizes = self._batch_bucket_sizes()
-        if not self._prefix_reprefill_enabled and not self._kv_cache_enabled:
+        if self._kv_cache_enabled:
+            required_entries = 4  # {first step, later steps} x {batch 1, dynamic batch}
+        elif not self._prefix_reprefill_enabled:
             # One compile for bsz==1 plus one dynamic compile reused for
             # bsz>1 (mark_dynamic below). Returned directly, not via max()
             # with the global default: this limit only scopes this warmup.
+            # A regression here logs a recompile-limit warning and falls
+            # back to eager for unseen shapes rather than raising.
             return min(len(bucket_sizes), 2)
-        if not self._prefix_reprefill_enabled:
-            required_entries = len(bucket_sizes)
         else:
             prefix_buckets = (
                 self._prefix_graph_buckets.intersection(bucket_sizes)
@@ -1123,8 +1125,6 @@ class CodePredictorWrapper(nn.Module):
             if needs_full_graph:
                 full_graph_entries += len(prefix_buckets)
             required_entries = full_graph_entries + len(prefix_buckets) * len(prefix_seq_lens)
-        if self._kv_cache_enabled:
-            required_entries = 4  # {first step, later steps} x {batch 1, dynamic batch}
         return max(torch._dynamo.config.cache_size_limit, required_entries)
 
     def _warmup_buckets(self) -> None:
