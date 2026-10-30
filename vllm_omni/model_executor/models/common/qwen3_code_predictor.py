@@ -1104,12 +1104,20 @@ class CodePredictorWrapper(nn.Module):
 
     def _compile_cache_size_limit(self) -> int:
         bucket_sizes = self._batch_bucket_sizes()
+        if not self._prefix_reprefill_enabled and not self._kv_cache_enabled:
+            # Plain branch: one graph for bsz==1 plus one dynamic graph reused
+            # for every bsz>1 bucket (_warmup_buckets()'s mark_dynamic use
+            # below). min() covers the degenerate single-bucket case (e.g.
+            # max_num_seqs==1 or a single _execution_batch_buckets entry),
+            # where only that one compile happens (static if the bucket is 1,
+            # dynamic otherwise). Returned directly, bypassing the max() with
+            # the global default below: this limit is scoped to this warmup
+            # call via torch._dynamo.config.patch(), so an unexpected third
+            # recompile here should trip visibly rather than being absorbed
+            # up to whatever cache_size_limit happens to be set globally.
+            return min(len(bucket_sizes), 2)
         if not self._prefix_reprefill_enabled:
-            # Plain branch: one static graph for bsz==1 plus one dynamic graph
-            # reused for every bsz>1 bucket (_warmup_buckets()'s mark_dynamic
-            # use below). min() covers the degenerate single-bucket case
-            # (e.g. max_num_seqs==1), where only the static graph is built.
-            required_entries = min(len(bucket_sizes), 2)
+            required_entries = len(bucket_sizes)
         else:
             prefix_buckets = (
                 self._prefix_graph_buckets.intersection(bucket_sizes)
