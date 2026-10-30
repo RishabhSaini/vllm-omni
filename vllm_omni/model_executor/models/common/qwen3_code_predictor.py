@@ -1191,8 +1191,14 @@ class CodePredictorWrapper(nn.Module):
                     torch.arange(max_seq, device=device, dtype=torch.long).unsqueeze(0).expand(bsz, -1).contiguous()
                 )
                 self._bucket_pos_ids[bsz] = pos_ids
+                hidden = proj_buf[:bsz, :max_seq, :]
+                if bsz > 1:
+                    # One graph for every batch >= 2 (not one compile per bucket):
+                    # mirrors the incremental K/V decoding warmup above.
+                    torch._dynamo.mark_dynamic(hidden, 0)
+                    torch._dynamo.mark_dynamic(pos_ids, 0)
                 for _ in range(3):
-                    self._compiled_model_fwd(proj_buf[:bsz, :max_seq, :], pos_ids)
+                    self._compiled_model_fwd(hidden, pos_ids)
             logger.info("code_predictor: warmup done for buckets %s", self._bucket_sizes)
 
         # Compiled attention warmup is asynchronous. Complete it before graph
