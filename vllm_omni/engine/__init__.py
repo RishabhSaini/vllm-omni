@@ -160,6 +160,9 @@ class OmniEngineCoreOutput(EngineCoreOutput):
     is_coalesced: bool = False
     # A request's serialized stage payload; this is only used for run requests
     stage_payload: bytes | None = None
+    # Duplex session stats (RFC #8325): [epoch, seq, start_ns, duration_ns] step
+    # spans of measured duplex chunks, the producing step's chunk last.
+    stage_work: list[list[int]] | None = None
 
 
 class OmniEngineCoreOutputs(EngineCoreOutputs):
