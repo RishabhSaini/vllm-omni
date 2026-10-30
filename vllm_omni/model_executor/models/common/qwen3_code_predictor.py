@@ -1105,7 +1105,11 @@ class CodePredictorWrapper(nn.Module):
     def _compile_cache_size_limit(self) -> int:
         bucket_sizes = self._batch_bucket_sizes()
         if not self._prefix_reprefill_enabled:
-            required_entries = len(bucket_sizes)
+            # Plain branch: one static graph for bsz==1 plus one dynamic graph
+            # reused for every bsz>1 bucket (_warmup_buckets()'s mark_dynamic
+            # use below). min() covers the degenerate single-bucket case
+            # (e.g. max_num_seqs==1), where only the static graph is built.
+            required_entries = min(len(bucket_sizes), 2)
         else:
             prefix_buckets = (
                 self._prefix_graph_buckets.intersection(bucket_sizes)
@@ -1192,7 +1196,10 @@ class CodePredictorWrapper(nn.Module):
                 )
                 self._bucket_pos_ids[bsz] = pos_ids
                 hidden = proj_buf[:bsz, :max_seq, :]
-                if bsz > 1:
+                # NPU reaches this branch with _compiled_model_fwd == model.forward
+                # (eager, no torch.compile; see _setup_compile()'s NPU-graphs path),
+                # where mark_dynamic would be a silent no-op.
+                if bsz > 1 and not current_omni_platform.is_npu():
                     # One graph for every batch >= 2 (not one compile per bucket):
                     # mirrors the incremental K/V decoding warmup above.
                     torch._dynamo.mark_dynamic(hidden, 0)
