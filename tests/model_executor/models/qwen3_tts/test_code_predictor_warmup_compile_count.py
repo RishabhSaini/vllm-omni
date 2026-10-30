@@ -24,6 +24,8 @@ current_omni_platform singleton on real CUDA hits none of that). Mocking the
 platform is exactly the kind of interference this test needs to avoid.
 """
 
+import types
+
 import pytest
 import torch
 from torch._dynamo.testing import CompileCounter
@@ -58,11 +60,16 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
         )
         talker_config = Qwen3TTSTalkerConfig(hidden_size=64, num_code_groups=4)
 
-        vllm_config = mocker.MagicMock()
-        vllm_config.scheduler_config.max_num_seqs = 16
-        # Empty dict (not a MagicMock default) so .get(...) on every optional
-        # key is None -- forces the plain branch, not KV-cache/prefix-reprefill.
-        vllm_config.additional_config = {}
+        # A SimpleNamespace with exactly the attributes _setup_compile()'s call
+        # chain reads (scheduler_config.max_num_seqs, model_config.stage_connector_config,
+        # additional_config) -- not a bare MagicMock(), so any *new* attribute
+        # read added later raises AttributeError instead of silently returning
+        # a truthy mock that changes which branch runs without this test noticing.
+        vllm_config = types.SimpleNamespace(
+            scheduler_config=types.SimpleNamespace(max_num_seqs=16),
+            model_config=types.SimpleNamespace(stage_connector_config=None),
+            additional_config={},
+        )
 
         counter = CompileCounter()
         real_compile = torch.compile
@@ -80,6 +87,13 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
             config=cp_config,
             talker_config=talker_config,
         ).to(device="cuda", dtype=torch.bfloat16)
+
+        # Pin the branch _setup_compile() is about to take -- without these, a
+        # future config-parsing change landing on the frame-local KV path (which
+        # returns before calling the base _warmup_buckets()) would fail below
+        # with a confusing frame_count mismatch instead of a clear message here.
+        assert not predictor._kv_requested
+        assert predictor._frame_cache is None
 
         predictor._setup_compile()  # drives the real plain-branch _warmup_buckets()
 
