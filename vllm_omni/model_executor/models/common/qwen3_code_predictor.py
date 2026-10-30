@@ -1105,16 +1105,9 @@ class CodePredictorWrapper(nn.Module):
     def _compile_cache_size_limit(self) -> int:
         bucket_sizes = self._batch_bucket_sizes()
         if not self._prefix_reprefill_enabled and not self._kv_cache_enabled:
-            # Plain branch: one graph for bsz==1 plus one dynamic graph reused
-            # for every bsz>1 bucket (_warmup_buckets()'s mark_dynamic use
-            # below). min() covers the degenerate single-bucket case (e.g.
-            # max_num_seqs==1 or a single _execution_batch_buckets entry),
-            # where only that one compile happens (static if the bucket is 1,
-            # dynamic otherwise). Returned directly, bypassing the max() with
-            # the global default below: this limit is scoped to this warmup
-            # call via torch._dynamo.config.patch(), so an unexpected third
-            # recompile here should trip visibly rather than being absorbed
-            # up to whatever cache_size_limit happens to be set globally.
+            # One compile for bsz==1 plus one dynamic compile reused for
+            # bsz>1 (mark_dynamic below). Returned directly, not via max()
+            # with the global default: this limit only scopes this warmup.
             return min(len(bucket_sizes), 2)
         if not self._prefix_reprefill_enabled:
             required_entries = len(bucket_sizes)
@@ -1204,12 +1197,10 @@ class CodePredictorWrapper(nn.Module):
                 )
                 self._bucket_pos_ids[bsz] = pos_ids
                 hidden = proj_buf[:bsz, :max_seq, :]
-                # NPU reaches this branch with _compiled_model_fwd == model.forward
-                # (eager, no torch.compile; see _setup_compile()'s NPU-graphs path),
-                # where mark_dynamic would be a silent no-op.
+                # Reuses one compiled graph across all bsz>1 buckets instead
+                # of compiling per bucket (same technique as the K/V-cache
+                # branch above). NPU runs model.forward eager here, so skip.
                 if bsz > 1 and not current_omni_platform.is_npu():
-                    # One graph for every batch >= 2 (not one compile per bucket):
-                    # mirrors the incremental K/V decoding warmup above.
                     torch._dynamo.mark_dynamic(hidden, 0)
                     torch._dynamo.mark_dynamic(pos_ids, 0)
                 for _ in range(3):

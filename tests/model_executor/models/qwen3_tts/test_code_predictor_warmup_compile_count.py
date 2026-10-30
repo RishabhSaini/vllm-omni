@@ -1,27 +1,15 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM-Omni project
-"""Regression guard: the plain warmup branch must not recompile per bucket.
+"""Regression guard: _warmup_buckets()'s plain branch must not recompile per bucket.
 
-Qwen3TTSCodePredictor._warmup_buckets()'s plain branch (no KV-cache, no
-prefix-reprefill) marks the batch dimension dynamic after the first bucket so
-later buckets reuse one compiled graph instead of each bucket triggering its
-own Inductor compile (see the sibling KV-cache-enabled branch's existing use
-of the same pattern a few lines above). This test drives the real
-_setup_compile() / _warmup_buckets() call chain -- not a reimplementation of
-the warmup loop -- with torch.compile patched to count Dynamo frames instead
-of invoking Inductor, so a future change that drops/moves the mark_dynamic
-calls, or reintroduces per-bucket specialization in forward() (including via
-a new graph break), fails this test instead of silently costing the warmup
-time back.
+Drives the real _setup_compile()/_warmup_buckets() chain with torch.compile
+patched to count Dynamo frames, so dropping mark_dynamic or adding a
+shape-dependent branch to forward() fails this test instead of silently
+costing the warmup time back.
 
-Uses plain (unmocked) imports, like test_cached_code_predictor.py, rather
-than test_code_predictor_dtype.py's CPU-oriented mocked-import harness: with
-that harness's MagicMock-patched current_omni_platform, Dynamo takes a
-different trace through a graph break inside CodePredictorAttention and
-mis-specializes the resumed frame's batch dim to a constant, independent of
-this fix (reproduced with CodePredictorBaseModel directly: a real
-current_omni_platform singleton on real CUDA hits none of that). Mocking the
-platform is exactly the kind of interference this test needs to avoid.
+Uses plain imports rather than test_code_predictor_dtype.py's mocked-import
+harness: mocking current_omni_platform there makes Dynamo hit a graph break
+and mis-specialize the batch dim, unrelated to this fix.
 """
 
 import types
@@ -60,11 +48,8 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
         )
         talker_config = Qwen3TTSTalkerConfig(hidden_size=64, num_code_groups=4)
 
-        # A SimpleNamespace with exactly the attributes _setup_compile()'s call
-        # chain reads (scheduler_config.max_num_seqs, model_config.stage_connector_config,
-        # additional_config) -- not a bare MagicMock(), so any *new* attribute
-        # read added later raises AttributeError instead of silently returning
-        # a truthy mock that changes which branch runs without this test noticing.
+        # Only the attributes _setup_compile() reads; unlike a bare MagicMock(),
+        # a new attribute read later raises instead of silently flipping the branch.
         vllm_config = types.SimpleNamespace(
             scheduler_config=types.SimpleNamespace(max_num_seqs=16),
             model_config=types.SimpleNamespace(stage_connector_config=None),
@@ -88,10 +73,9 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
             talker_config=talker_config,
         ).to(device="cuda", dtype=torch.bfloat16)
 
-        # Pin the branch _setup_compile() is about to take -- without these, a
-        # future config-parsing change landing on the frame-local KV path (which
-        # returns before calling the base _warmup_buckets()) would fail below
-        # with a confusing frame_count mismatch instead of a clear message here.
+        # Pins the branch: the frame-local KV path returns before calling the
+        # base _warmup_buckets(), which would otherwise fail below with a
+        # confusing frame_count mismatch instead of a clear assertion here.
         assert not predictor._kv_requested
         assert predictor._frame_cache is None
 
@@ -99,13 +83,11 @@ def test_plain_warmup_compiles_exactly_two_graphs(mocker) -> None:
 
         assert not predictor._kv_cache_enabled
         assert not predictor._prefix_reprefill_enabled
-        # Exactly 1 static graph for bsz==1 + 1 dynamic graph reused for bsz>1
-        # across all of predictor._bucket_sizes. frame_count also rises on a
-        # graph break in forward(), which should trip this test too.
+        # 1 static graph (bsz==1) + 1 dynamic graph reused for bsz>1. A graph
+        # break in forward() also raises frame_count, so this catches that too.
         assert counter.frame_count == 2, (
-            f"expected exactly 2 Dynamo frames (1 static bsz==1 graph + 1 dynamic graph "
-            f"for bsz>1) across buckets {predictor._bucket_sizes}, got {counter.frame_count} "
-            "-- either per-bucket shape specialization returned (mark_dynamic dropped/moved) "
+            f"expected 2 Dynamo frames, got {counter.frame_count} for buckets "
+            f"{predictor._bucket_sizes} -- per-bucket specialization returned, "
             "or forward() gained a new graph break"
         )
     finally:
